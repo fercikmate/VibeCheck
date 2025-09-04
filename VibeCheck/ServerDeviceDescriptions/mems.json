@@ -1,0 +1,10 @@
+{
+  "id": "vibration_sensor_1",
+  "group": "sensor",
+  "ContactService": {
+    "State": "T/F"
+  },
+  "VibrationService": {
+    "Vibration": "0-29.43"
+  }
+}

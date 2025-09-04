@@ -12,6 +12,7 @@
 
 #define MQTTPORT 1883
 #define SSDPPORT 1900
+#define HTTPPORT 8080
 #define SSDP_ADDR "239.255.255.250"
 
 // Global device information
@@ -20,7 +21,7 @@ const char *ssdp_usn = "Kontroler";
 const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; //or idk
 // Global control variable
 static volatile int running = 1;
-static int ssdp_sockfd = -1;
+
 
 // Function prototype for sendg/get_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char* type);
@@ -36,8 +37,9 @@ void* multicast_listener(void* arg) {
     ssdp_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
     if (ssdp_sockfd < 0) {
         perror("Multicast socket creation failed");
-        pthread_exit(NULL);
-    }
+            pthread_exit(NULL);
+        }
+   
 
     // Allow multiple sockets to use the same PORT number   
     int reuse = 1;
@@ -66,12 +68,13 @@ void* multicast_listener(void* arg) {
         close(ssdp_sockfd);
         pthread_exit(NULL);
     }
-    printf("Controller SSDP started on 239.255.255.250:%d\n", SSDPPORT);
+    printf("Controller SSDP listening on 239.255.255.250:%d...\n\n", SSDPPORT);
 
     // Make socket non-blocking
     int flags = fcntl(ssdp_sockfd, F_GETFL, 0);
     fcntl(ssdp_sockfd, F_SETFL, flags | O_NONBLOCK);
    
+
     // Send initial Msearch announcement
     send_ssdp_message(ssdp_sockfd, NULL,"M-SEARCH"); //send msearch on start to everzyone
     
@@ -101,24 +104,28 @@ void* multicast_listener(void* arg) {
             } else {
                 msgbuf[nbytes] = '\0';
               
-              if (strstr(msgbuf, "USN") != NULL) { //TODO  select only the devices needed for project
-                //  printf("Received from %s:\n%s\n", inet_ntoa(sender_addr.sin_addr), msgbuf);
+              if (strstr(msgbuf, "USN") != NULL) { //TODO  select only the devices with names
+                //  printf("Received from %s:\n%s\n", inet_ntoa(sender_addr.sin_addr), msgbuf); print address
                 if (strstr(msgbuf, "NOTIFY") != NULL) {
                     if (strstr(msgbuf, "ssdp:alive") != NULL) {
-                        printf("alive received: %s\n", msgbuf);
-            //            get_ssdp_message(ssdp_sockfd, &sender_addr, "alive");
+                        printf("ALIVE received: %s\n", msgbuf);
+            //           get_ssdp_message(ssdp_sockfd, &sender_addr, "alive");
+                        //TODO add to device list
                     }
                     if (strstr(msgbuf, "ssdp:byebye") != NULL) {
-                        printf("byebye received: %s\n", msgbuf);
+                        printf("BYEBYE received: %s\n", msgbuf);
                      //   get_ssdp_message(ssdp_sockfd, &sender_addr, "byebye");
+                     //TODO remove from device list
                     }
                 } else if (strstr(msgbuf, "HTTP/1.1 200 OK") != NULL) {
-                    printf("M-SEARCH response received: %s\n", msgbuf);
-                    //get_ssdp_message(ssdp_sockfd, &sender_addr, "response");
+                    printf("RESPONSE received: %s\n", msgbuf);
+                    //TODO but can be done her get_ssdp_message(ssdp_sockfd, &sender_addr, "response");
+                    //TODO add to device list
                 }
-            }}
         }
     }
+    } 
+}
     // Send byebye announcement before exiting
         printf("Shutting down SSDP.\n");
 
@@ -126,6 +133,7 @@ void* multicast_listener(void* arg) {
         ssdp_sockfd = -1;
         printf("SSDP listener stopped.\n");
         pthread_exit(NULL);
+
 }
 //create thread function to start SSDP
 void ssdp_start() {
@@ -156,7 +164,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
     }
     if (strcmp(type, "M-SEARCH") == 0) {
         snprintf(message, sizeof(message),
-            "M-SEARCH* HTTP/1.1\r\n" 
+            "M-SEARCH * HTTP/1.1\r\n" 
             "HOST: %s:%d\r\n"
             "MAN: \"ssdp:discover\"\r\n"
             "MX:3\r\n"
@@ -174,7 +182,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
         printf("SSDP %s message sent:\n%s\n", type, message);
     }
 }
-              
+              //get alive or byebye message
 /*void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) {
     char message[512];
     struct sockaddr_in target_addr; // Local variable for the target address
@@ -216,6 +224,8 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
   
 }*/
 
+//TODO implement device HTTP description retrieval from server.c 
+
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
     if (rc == 0) {
@@ -255,8 +265,6 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 
 int main() {
 
-    ssdp_start(); //start SSDP
-
     //initialze mosquitto broker
    struct mosquitto *mosq;
    int rc;
@@ -283,10 +291,11 @@ int main() {
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
-    
-    mosquitto_loop_forever(mosq, -1, 1);
-	mosquitto_destroy(mosq);
-	mosquitto_lib_cleanup();
 
+     ssdp_start(); //start SSDP
+
+    mosquitto_loop_forever(mosq, -1, 1);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
     return 0;
 }

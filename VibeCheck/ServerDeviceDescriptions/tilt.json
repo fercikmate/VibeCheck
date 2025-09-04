@@ -1,0 +1,11 @@
+{
+"id": "sensor_tilt_1",
+"group": "sensor",
+"ContactService": {
+"State": "T/F"
+},
+"TiltService": {
+"AngleX": "0-15",
+"AngleY": "0-15"
+}
+}

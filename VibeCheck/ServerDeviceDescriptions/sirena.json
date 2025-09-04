@@ -1,0 +1,10 @@
+{
+    "id": "Warning_audio_1",
+    "group": "actuator",
+    "ContactService": {
+        "State": "T/F"
+    },
+    "WarnService": {
+        "Siren": "OFF/INTERMITTENT/STEADY"
+    }
+}

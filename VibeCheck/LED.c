@@ -20,7 +20,7 @@ const char *ssdp_usn = "LED";
 const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; //or idk
 // Global control variable
 static volatile int running = 1;
-static int ssdp_sockfd = -1;
+
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char* type);
@@ -65,7 +65,7 @@ void* multicast_listener(void* arg) {
         close(ssdp_sockfd);
         pthread_exit(NULL);
     }
-    printf("Multicast listener started on 239.255.255.250:%d\n", SSDPPORT);
+    printf("Multicast listener started on 239.255.255.250:%d\n\n", SSDPPORT);
 
     // Make socket non-blocking
     int flags = fcntl(ssdp_sockfd, F_GETFL, 0);
@@ -150,7 +150,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
     }
     if (strcmp(type, "alive") == 0) {
         snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n" 
+            "NOTIFY * HTTP/1.1\r\n" 
             "HOST: %s:%d\r\n"
             "NT:%s\r\n" //type
             "NTS:ssdp:alive\r\n"//subtype
@@ -159,7 +159,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
             "\r\n", SSDP_ADDR, SSDPPORT,ssdp_nt, ssdp_usn, ssdp_location);
     } else if (strcmp(type, "byebye") == 0) {
         snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n"
+            "NOTIFY * HTTP/1.1\r\n"
             "HOST: %s:%d\r\n"
             "NT:%s\r\n" //type
             "NTS:ssdp:byebye\r\n" //subtype
@@ -229,8 +229,6 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 
 int main() {
 
-    ssdp_start(); //start SSDP
-
     //initialze mosquitto broker
    struct mosquitto *mosq;
    int rc;
@@ -257,7 +255,8 @@ int main() {
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
-    
+    ssdp_start(); //start SSDP
+
     mosquitto_loop_forever(mosq, -1, 1);
 	mosquitto_destroy(mosq);
 	mosquitto_lib_cleanup();
