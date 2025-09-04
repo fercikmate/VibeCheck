@@ -1,0 +1,10 @@
+{
+  "id": "Warning_LED_1",
+  "group": "actuator",
+  "ContactService": {
+    "State": "T/F"
+  },
+  "WarnService": {
+    "Blink": "OFF/SLOW/FAST"
+  }
+}

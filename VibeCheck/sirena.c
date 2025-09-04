@@ -17,10 +17,9 @@
 // Global device information
 const char *ssdp_nt = "device:alive";
 const char *ssdp_usn = "Sirena";
-const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; //or idk
+const char *ssdp_location = "http://127.0.0.1:8080/sirena.json"; 
 // Global control variable
 static volatile int running = 1;
-static int ssdp_sockfd = -1;
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char* type);
@@ -65,7 +64,7 @@ void* multicast_listener(void* arg) {
         close(ssdp_sockfd);
         pthread_exit(NULL);
     }
-    printf("Multicast listener started on 239.255.255.250:%d\n", SSDPPORT);
+    printf("Multicast listener started on 239.255.255.250:%d\n\n", SSDPPORT);
 
     // Make socket non-blocking
     int flags = fcntl(ssdp_sockfd, F_GETFL, 0);
@@ -115,7 +114,7 @@ void* multicast_listener(void* arg) {
         send_ssdp_message(ssdp_sockfd, NULL,"byebye"); 
         
         close(ssdp_sockfd);
-        ssdp_sockfd = -1;
+        ssdp_sockfd = -1; // Mark as closed
         printf("SSDP listener stopped.\n");
         pthread_exit(NULL);
 }
@@ -146,18 +145,27 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* typ
         target_addr.sin_port = htons(SSDPPORT);
         dest_addr = &target_addr; // Point to our local address structure
     }
+    // if sockfd is invalid, create a temporary socket
+    if (sockfd == -1 || sockfd == 0) {
+          int local_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+          if (local_sockfd < 0) {
+             perror("Failed to create local socket for SSDP message");
+             return;
+          }
+          sockfd = local_sockfd;
+       }
     if (strcmp(type, "alive") == 0) {
         snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n" 
+            "NOTIFY * HTTP/1.1\r\n" 
             "HOST: %s:%d\r\n"
             "NT:%s\r\n" //type
             "NTS:ssdp:alive\r\n"//subtype
             "USN:%s\r\n" //unique name
-            "LOCATION:%s\r\n" 
+            "LOCATION:%s\r\n" //TODO add proper ip:port.json
             "\r\n", SSDP_ADDR, SSDPPORT,ssdp_nt, ssdp_usn, ssdp_location);
     } else if (strcmp(type, "byebye") == 0) {
         snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n"
+            "NOTIFY * HTTP/1.1\r\n"
             "HOST: %s:%d\r\n"
             "NT:%s\r\n" //type
             "NTS:ssdp:byebye\r\n" //subtype
@@ -205,7 +213,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 {
 	// Print the topic for the first message received, then disconnect
 	printf("Topic: %s\n", msg->topic);
-	mosquitto_disconnect(mosq);
+	
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -215,19 +223,21 @@ void on_publish(struct mosquitto *mosq, void *obj, int mid)
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 {
+    send_ssdp_message(-1, NULL,"byebye");
     if (rc != 0) {
         puts("Unexpected disconnection.");
     }
     else {
         puts("Disconnected from broker.");
     }
+    
+    
     ssdp_stop(); //stop SSDP when disconnected
 }
 
 
 int main() {
 
-    ssdp_start(); //start SSDP
 
     //initialze mosquitto broker
    struct mosquitto *mosq;
@@ -255,8 +265,29 @@ int main() {
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
+    // Publish a will message on ungraceful disconnect
+    //publishes the usn of the device, so the controler know which device disconnected
+    const char *LWTTopic = "VibeCheck/devices/disconnected";
+    mosquitto_will_set( mosq, 
+                        LWTTopic, 
+                        strlen(ssdp_usn),  //payload length
+                        ssdp_usn, //payload
+                        0, //qos
+                        false  ); //retain
     
-    mosquitto_loop_forever(mosq, -1, 1);
+    printf("Press q to quit...\n\n");
+    mosquitto_loop_start(mosq);//runs in background
+    ssdp_start(); //start SSDP
+
+    char cmd[16];
+    while(1){
+            fgets(cmd, sizeof(cmd), stdin);
+            cmd[strcspn(cmd, "\n")] = 0; 
+            if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q")==0) break;
+    }
+    send_ssdp_message(-1, NULL,"byebye");
+    mosquitto_loop_stop(mosq, true);
+      
 	mosquitto_destroy(mosq);
 	mosquitto_lib_cleanup();
 
