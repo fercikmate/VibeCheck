@@ -9,18 +9,18 @@
 #include <mosquitto.h>
 #include <fcntl.h>
 #include <errno.h>
- 
+
+//ports and addresses
 #define MQTTPORT 1883
 #define SSDPPORT 1900
 #define SSDP_ADDR "239.255.255.250"
 
-// Global device information
 const char *ssdp_nt = "device:alive";
 const char *ssdp_usn = "LED";
 const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; //or idk
 // Global control variable
 static volatile int running = 1;
-static int ssdp_sockfd = -1 ;
+static int ssdp_sockfd = -1;
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char* type);
