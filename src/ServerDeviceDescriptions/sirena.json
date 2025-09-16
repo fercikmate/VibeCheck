@@ -1,5 +1,5 @@
 {
-    "id": "Warning_audio_1",
+    "id": "sirena_actuator",
     "group": "actuator",
     "ContactService": {
         "State": "T/F"

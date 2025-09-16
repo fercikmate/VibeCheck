@@ -30,15 +30,20 @@ const char *ssdp_location = "None"; // or idk
 static volatile int running = 1;
 
 // Function prototypes 
+void remove_device_by_id(const char *id);
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
 int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
 const char *get_device_id(cJSON *device_json);
-// void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) ;
+void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
+int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
+const char *get_device_id(cJSON *device_json);
+
 
 
 
 void *multicast_listener(void *arg)
 {
+    struct mosquitto *mosq = (struct mosquitto *)arg; // Cast argument to mosquitto pointer
     int ssdp_sockfd;
     struct sockaddr_in addr, sender_addr;
     struct ip_mreq mreq;
@@ -123,6 +128,7 @@ void *multicast_listener(void *arg)
             {
                 msgbuf[nbytes] = '\0';
                char location_url[256];
+               char device_id[64];
 
                 //   if (strstr(msgbuf, "USN") != NULL){ // TODO  select only the devices with names
                 //  printf("Received from %s:\n%s\n", inet_ntoa(sender_addr.sin_addr), msgbuf); print address
@@ -130,21 +136,49 @@ void *multicast_listener(void *arg)
                 {
                     if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:alive") != NULL)
                     {
-                        printf("ALIVE received: %s\n", msgbuf);
+                        printf("ALIVE received: %s", msgbuf);
                         char json_buffer[2048];
                         sscanf(strstr(msgbuf, "LOCATION: "), "LOCATION: %[^\r\n]", location_url);
                         if (strcmp(location_url, "None") != 0) {
                             if (fetch_json_from_url(location_url, json_buffer, sizeof(json_buffer)) == 0) {
                                 cJSON *json = cJSON_Parse(json_buffer);
                                 if (json) {
+                                        // Check if device is already connected
+                                        const char *new_id = get_device_id(json);
+                                        int already_connected = 0;
+                                        for (int i = 0; i < MAX_DEVICES; ++i) {
+                                            if (device_info[i] != NULL) {
+                                                const char *existing_id = get_device_id(device_info[i]);
+                                                if (existing_id && strcmp(existing_id, new_id) == 0) {
+                                                    already_connected = 1;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!already_connected) {
                                     // Store in device_info array (find a free slot)
                                     for (int i = 0; i < MAX_DEVICES; ++i) {
                                         if (device_info[i] == NULL) {
                                             device_info[i] = json;
                                             printf("Added device: %s\n", get_device_id(json));
+
+                                            // Notify via MQTT
+                                            char topic[128];
+                                            snprintf(topic, sizeof(topic), "VibeCheck/%s/connected", get_device_id(json));
+                                            int ret = mosquitto_publish(mosq, NULL, topic, 0, 0, 0, false);
+                                            if (ret != MOSQ_ERR_SUCCESS) {
+                                                fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
+                                            } else {
+                                                printf("Sent device online notification for device!\n\n");
+                                            }
                                             break;
                                         }
                                     }
+                                        } else {
+                                            printf("Device type %s already connected, skipping.\n", new_id);
+                                            cJSON_Delete(json); // Free unused json
+                                            
+                                            }
                                 }
                             }
                         }
@@ -152,29 +186,60 @@ void *multicast_listener(void *arg)
                     }
                     if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:byebye") != NULL)
                     {
-                        printf("BYEBYE received: %s\n", msgbuf);
-                        //   get_ssdp_message(ssdp_sockfd, &sender_addr, "byebye");
-                        // TODO remove from device list
+                        printf("BYEBYE received: %s", msgbuf);
+                        sscanf(strstr(msgbuf, "USN: "), "USN: %63[^\r\n]", device_id);
+                        remove_device_by_id(device_id);
+                        
                     }
                 }
                 else if (strstr(msgbuf, "HTTP/1.1 200 OK") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
                 {
-                    printf("RESPONSE received: %s\n", msgbuf);
+                    printf("RESPONSE received: %s", msgbuf);
                     char json_buffer[2048];
                     sscanf(strstr(msgbuf, "LOCATION: "), "LOCATION: %[^\r\n]", location_url);
                     if (strcmp(location_url, "None") != 0) {
                         if (fetch_json_from_url(location_url, json_buffer, sizeof(json_buffer)) == 0) {
                             cJSON *json = cJSON_Parse(json_buffer);
                             if (json) {
+                                
+                                // Check if device is already connected
+                                const char *new_id = get_device_id(json);
+                                int already_connected = 0;
+                                for (int i = 0; i < MAX_DEVICES; ++i) {
+                                    if (device_info[i] != NULL) {
+                                        const char *existing_id = get_device_id(device_info[i]);
+                                        if (existing_id && strcmp(existing_id, new_id) == 0) {
+                                            already_connected = 1;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (!already_connected) {
                                 // Store in device_info array (find a free slot)
                                 for (int i = 0; i < MAX_DEVICES; ++i) {
                                     if (device_info[i] == NULL) {
                                         device_info[i] = json;
                                         printf("Added device: %s\n", get_device_id(json));
+                                        
+                                         // Notify via MQTT
+                                        char topic[128];
+                                        snprintf(topic, sizeof(topic), "VibeCheck/%s/connected", get_device_id(json));
+                                        int ret = mosquitto_publish(mosq, NULL, topic, 0, 0, 0, false);
+                                        if (ret != MOSQ_ERR_SUCCESS) {
+                                            fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
+                                        } else {
+                                            printf("Sent device online notification for device!\n\n"); //TODO terminate second instance of device
+                                        }
                                         break;
                                     }
                                 }
-                            }
+                            } else {
+                                    printf("Device type %s already connected, skipping.\n", new_id);
+                                    cJSON_Delete(json); // Free unused json
+                                    
+                                    }
+                                }
                         }
                         // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
                     }
@@ -194,11 +259,11 @@ void *multicast_listener(void *arg)
 
 
 // create thread function to start SSDP
-void ssdp_start()
+void ssdp_start(struct mosquitto *mosq)
 {
     pthread_t ssdp_thread;
     running = 1;
-    pthread_create(&ssdp_thread, NULL, multicast_listener, NULL);
+    pthread_create(&ssdp_thread, NULL, multicast_listener, mosq);
     pthread_detach(ssdp_thread); // Let it run independently
 }
 
@@ -293,7 +358,7 @@ int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size) 
     const char *path = port_end + 1;
     if (!path) return -1;
 
-    // Now path points to "sirena.json" or whatever
+    //  path points to "sirena.json" or whatever
     int sockfd;
     struct sockaddr_in serv_addr;
     struct hostent *server;
@@ -329,7 +394,7 @@ int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size) 
     // Find start of JSON in HTTP response
     char *json_start = strchr(json_buffer, '{');
     if (!json_start) return -1;
-    memmove(json_buffer, json_start, strlen(json_start) + 1);
+    memmove(json_buffer, json_start, strlen(json_start) + 1); // kao memcopy ali bez overlap problema
     return 0;
 }
 
@@ -338,13 +403,27 @@ const char *get_device_id(cJSON *device_json) {
     return cJSON_IsString(id_item) ? id_item->valuestring : NULL;
 }
 
+void remove_device_by_id(const char *id) {
+    for (int i = 0; i < MAX_DEVICES; ++i) {
+        if (device_info[i] != NULL) {
+            const char *dev_id = get_device_id(device_info[i]);
+            if (dev_id && strcmp(dev_id, id) == 0) {
+                cJSON_Delete(device_info[i]);
+                device_info[i] = NULL;
+                printf("Removed device: %s\n", id);
+                break;
+            }
+        }
+    }
+}
+
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
     if (rc == 0)
     {
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/vibration", 0);
-        mosqitto_subscribe(mosq, NULL, "VibeCheck/sensors/tilt", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/tilt", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/threshold/change", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/+/disconnected", 0);
 
@@ -360,9 +439,28 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
-    printf("Topic: %s\n", msg->topic);
-    mosquitto_disconnect(mosq);
+    // Handle messages based on topic
+    if(strcmp(msg->topic, "VibeCheck/sensors/vibration") == 0) {
+        // Handle vibration sensor data
+        printf("Vibration sensor data received: %s\n", (char *)msg->payload);
+        
+    } else if(strcmp(msg->topic, "VibeCheck/sensors/tilt") == 0) {
+        // Handle tilt sensor data
+        printf("Tilt sensor data received: %s\n", (char *)msg->payload);
+    } else if(strcmp(msg->topic, "VibeCheck/threshold/change") == 0) {
+        // Handle threshold change command
+        printf("Threshold change command received: %s\n", (char *)msg->payload);
+    } else if(strstr(msg->topic, "/disconnected") != NULL) {
+        // Handle device disconnection
+        char device_id[64];
+        if (sscanf(msg->topic, "VibeCheck/%63[^/]/disconnected", device_id) == 1) {
+            // device_id contains the ID
+            remove_device_by_id(device_id);
+        }
+        printf("Device disconnected: %s\n", (char *)msg->payload);
+
+    }
+    
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -416,7 +514,7 @@ int main()
         sleep(5);
     }
 
-    ssdp_start(); // start SSDP
+    ssdp_start(mosq); // start SSDP
 
     mosquitto_loop_forever(mosq, -1, 1);
     mosquitto_destroy(mosq);

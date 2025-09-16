@@ -17,7 +17,7 @@
 // Global device information
 const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
 const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
-const char *ssdp_usn = "Sirena_actuator";
+const char *ssdp_usn = "sirena_actuator";
 const char *ssdp_location = "http://127.0.0.1:8080/sirena.json";
 // Global control variable
 static volatile int running = 1;
@@ -235,7 +235,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
         mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/audio", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
        
-        
+
         puts("Subscribed successfully.");
     }
     else

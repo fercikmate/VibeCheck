@@ -16,7 +16,7 @@
 
 // Global device information
 const char *ssdp_nt = "device:alive";
-const char *ssdp_usn = "Tilt_Sensor";
+const char *ssdp_usn = "tilt_sensor";
 const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; //or idk
 // Global control variable
 static volatile int running = 1;

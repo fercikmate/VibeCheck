@@ -17,7 +17,7 @@
 // Global device information
 const char *ssdp_nts = "ssdp:alive";
 const char *ssdp_st = "ssdp:projekat";
-const char *ssdp_usn = "MEMS_Sensor";
+const char *ssdp_usn = "mems_sensor";
 const char *ssdp_location = "http://127.0.0.1:8080/mems.json";
 // Global control variable
 static volatile int running = 1;
@@ -240,13 +240,20 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 }
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
-{
-    printf("Topic: %s\n", msg->topic);
+{   
+    if (strstr(msg->topic, ssdp_usn) != NULL) {
+    // The topic contains your device name
+    printf("The device is connected to the controller: %s\n", msg->topic);
+    printf("Enter sensor input:\n");
+    printf("Type q to quit...\n\n");
+    }
+    
+
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
-    printf("Message %d has been published.\n", mid);
+    printf("Message %d has been published.\n\n", mid-1);
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
@@ -299,17 +306,28 @@ int main()
     const char *LWTTopic = "VibeCheck/devices/disconnected";
     mosquitto_will_set(mosq, LWTTopic, strlen(ssdp_usn), ssdp_usn, 0, false);//send device usn on ungraceful disconnect
 
-    printf("Type q to quit...\n\n");
+   
     mosquitto_loop_start(mosq);
     ssdp_start();
 
-    char cmd[16];
+    char cmd[256];
     while (1)
     {
-        fgets(cmd, sizeof(cmd), stdin);
+        if (fgets(cmd, sizeof(cmd), stdin) == NULL)
+            break;
         cmd[strcspn(cmd, "\n")] = 0;
         if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
             break;
+        if (strlen(cmd) > 0) {
+            int ret = mosquitto_publish(mosq, NULL, "VibeCheck/sensors/vibration", strlen(cmd), cmd, 0, false);
+            if (ret != MOSQ_ERR_SUCCESS) {
+                fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
+            } else {
+                printf("Published to VibeCheck/sensors/vibration: %s\n\n", cmd);
+                printf("Enter sensor input:\n");
+                printf("Type q to quit...\n\n");
+            }
+        }
     }
 
     send_ssdp_message(-1, NULL, "byebye");
