@@ -13,6 +13,9 @@
 #define MQTTPORT 1883
 #define SSDPPORT 1900
 #define SSDP_ADDR "239.255.255.250"
+//defined by manufacturer
+#define max_vibration_threshold 29.43
+#define min_vibration_threshold 0.0
 
 // Global device information
 const char *ssdp_nts = "ssdp:alive";
@@ -319,6 +322,16 @@ int main()
         if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
             break;
         if (strlen(cmd) > 0) {
+            char *endptr;
+            double value = strtod(cmd, &endptr);
+            if (*endptr != '\0') {
+                printf("Invalid input! Please enter a number.\n");
+                continue;
+            }
+            if (value < min_vibration_threshold || value > max_vibration_threshold) {
+                printf("Value out of range! Enter a number between %.2f and %.2f.\n", min_vibration_threshold, max_vibration_threshold);
+                continue;
+            }
             int ret = mosquitto_publish(mosq, NULL, "VibeCheck/sensors/vibration", strlen(cmd), cmd, 0, false);
             if (ret != MOSQ_ERR_SUCCESS) {
                 fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));

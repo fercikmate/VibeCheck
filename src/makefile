@@ -5,7 +5,7 @@ ODIR=obj
 LDIR =../lib
 
 LIB= 
-LIBS= -lmosquitto -lpthread -lcjson
+LIBS= -lmosquitto -lpthread -lcjson -lm
 
 SRCS=application.c kontroler.c LED.c mems.c sirena.c tilt.c server.c
 

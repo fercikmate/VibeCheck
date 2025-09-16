@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <netdb.h>
+#include <math.h>
 #include <cjson/cJSON.h>
 
 #define MQTTPORT 1883
@@ -471,18 +472,17 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         int vibration = atoi((char *)msg->payload);
         const char *sirena_msg = "OFF";
         const char *led_msg = "OFF";
-        else if (vibration >= vibration_alert_threshold) {
+
+        if (vibration >= vibration_alert_threshold) {
             sirena_msg = "STEADY";
             led_msg = "FAST";
             state = "ALERT";
-
         } else if (vibration >= vibration_warning_threshold) {
             if (strcmp(state, "ALERT") != 0){
                  sirena_msg = "INTERMITTENT";
                  led_msg = "SLOW";
                  state = "WARNING";
-                }
-         
+            }
         }
 
         // Publish to sirena
@@ -507,6 +507,58 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
     } else if(strcmp(msg->topic, "VibeCheck/sensors/tilt") == 0) {
         // Handle tilt sensor data
         printf("Tilt sensor data received: %s\n", (char *)msg->payload);
+
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *x_item = cJSON_GetObjectItem(root, "x");
+            cJSON *y_item = cJSON_GetObjectItem(root, "y");
+            const char *sirena_msg = "OFF";
+            const char *led_msg = "OFF";
+            if (cJSON_IsNumber(x_item) && cJSON_IsNumber(y_item)) {
+                double x = x_item->valuedouble;
+                double y = y_item->valuedouble;
+                printf("Parsed tilt coordinates: x=%.2f, y=%.2f\n", x, y);
+
+                // Calculate tilt magnitude (example: Euclidean norm)
+                double tilt = sqrt(x * x + y * y);
+
+                if (tilt >= tilt_alert_threshold) {
+                    sirena_msg = "STEADY";
+                    led_msg = "FAST";
+                    state = "ALERT";
+                } else if (tilt >= tilt_warning_threshold) {
+                    if (strcmp(state, "ALERT") != 0){
+                        sirena_msg = "INTERMITTENT";
+                        led_msg = "SLOW";
+                        state = "WARNING";
+                    }
+                }
+
+                // Publish to sirena
+                int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/acct/control", strlen(sirena_msg), sirena_msg, 0, false);
+                if (ret1 != MOSQ_ERR_SUCCESS) {
+                    fprintf(stderr, "Failed to publish to sirena: %s\n", mosquitto_strerror(ret1));
+                } else {
+                    printf("Published to sirena: %s\n", sirena_msg);
+                }
+                // Publish to LED
+                int ret2 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(led_msg), led_msg, 0, false);
+                if (ret2 != MOSQ_ERR_SUCCESS) {
+                    fprintf(stderr, "Failed to publish to LED: %s\n", mosquitto_strerror(ret2));
+                } else {
+                    printf("Published to LED: %s\n", led_msg);
+                }
+                // Publish status JSON
+                char *json_str = make_status_json("tilt", tilt, state);
+                mosquitto_publish(mosq, NULL, "VibeCheck/status", strlen(json_str), json_str, 0, false);
+                cJSON_free(json_str);
+            } else {
+                printf("Invalid tilt JSON: missing or non-numeric x/y\n");
+            }
+            cJSON_Delete(root);
+        } else {
+            printf("Failed to parse tilt JSON\n");
+        }
     } else if(strcmp(msg->topic, "VibeCheck/threshold/change") == 0) {
         // Handle threshold change command
         printf("Threshold change command received: %s\n", (char *)msg->payload);
