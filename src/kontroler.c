@@ -9,11 +9,16 @@
 #include <mosquitto.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <cjson/cJSON.h>
 
 #define MQTTPORT 1883
 #define SSDPPORT 1900
 #define HTTPPORT 8080
 #define SSDP_ADDR "239.255.255.250"
+
+#define MAX_DEVICES 8
+// array of devices
+cJSON *device_list[MAX_DEVICES];
 
 // Global device information
 const char *ssdp_usn = "Kontroler";
@@ -26,6 +31,8 @@ static volatile int running = 1;
 // Function prototype for sendg/get_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
 // void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) ;
+
+
 
 void *multicast_listener(void *arg)
 {
@@ -210,6 +217,10 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
     }
 }
 
+const char *get_device_id(cJSON *device_json) {
+    cJSON *id_item = cJSON_GetObjectItem(device_json, "id");
+    return cJSON_IsString(id_item) ? id_item->valuestring : NULL;
+}
 
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
@@ -225,6 +236,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
         perror("Failed to connect to broker");
     }
 }
+
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {

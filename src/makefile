@@ -5,7 +5,7 @@ ODIR=obj
 LDIR =../lib
 
 LIB= 
-LIBS= -lmosquitto -lpthread
+LIBS= -lmosquitto -lpthread -lcjson
 
 SRCS=application.c kontroler.c LED.c mems.c sirena.c tilt.c server.c
 
@@ -32,10 +32,10 @@ server: $(ODIR)/server.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 run_all:
-	wt.exe -w 0 nt -p "Ubuntu" --title "LED" -- bash -c "./LED" &
-	wt.exe -w 0 nt -p "Ubuntu" --title "sirena" -- bash -c "./sirena" &
-	wt.exe -w 0 nt -p "Ubuntu" --title "mems" -- bash -c "./mems" &
-	wt.exe -w 0 nt -p "Ubuntu" --title "tilt" -- bash -c "./tilt" &
+	wt.exe -w 0 nt -p "Ubuntu" --title "LED_actuator" -- bash -c "./LED" &
+	wt.exe -w 0 nt -p "Ubuntu" --title "sirena_actuator" -- bash -c "./sirena" &
+	wt.exe -w 0 nt -p "Ubuntu" --title "mems_sensor" -- bash -c "./mems" &
+	wt.exe -w 0 nt -p "Ubuntu" --title "tilt_sensor" -- bash -c "./tilt" &
 	wt.exe -w 0 nt -p "Ubuntu" --title "server" -- bash -c "./server" &
 	wt.exe -w 0 nt -p "Ubuntu" --title "application" -- bash -c "./application" &
 	wt.exe -w 0 nt -p "Ubuntu" --title "kontroler" -- bash -c "./kontroler" &
