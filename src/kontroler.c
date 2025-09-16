@@ -343,7 +343,6 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     if (rc == 0)
     {
         puts("Subscribing to topics...");
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/control/status", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/vibration", 0);
         mosqitto_subscribe(mosq, NULL, "VibeCheck/sensors/tilt", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/threshold/change", 0);

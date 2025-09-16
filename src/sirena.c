@@ -233,7 +233,9 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     {
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/audio", 0);
-        // mosquitto_subscribe(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
+       
+        
         puts("Subscribed successfully.");
     }
     else
