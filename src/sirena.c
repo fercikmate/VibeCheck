@@ -17,7 +17,7 @@
 // Global device information
 const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
 const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
-const char *ssdp_usn = "Sirena";
+const char *ssdp_usn = "Sirena_actuator";
 const char *ssdp_location = "http://127.0.0.1:8080/sirena.json";
 // Global control variable
 static volatile int running = 1;
@@ -195,7 +195,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS: ssdp:byebye\r\n" // subtype
                  "USN: %s\r\n"          // unique name
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nts, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_usn);
     }
     else if (strcmp(type, "response") == 0)
     {

@@ -209,49 +209,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
         printf("SSDP %s message sent:\n%s\n", type, message);
     }
 }
-// get alive or byebye message
-/*void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) {
-    char message[512];
-    struct sockaddr_in target_addr; // Local variable for the target address
 
-    // If dest_addr is NULL, create a multicast target address
-    if (dest_addr == NULL) {
-        memset(&target_addr, 0, sizeof(target_addr));
-        target_addr.sin_family = AF_INET;
-        target_addr.sin_addr.s_addr = inet_addr(SSDP_ADDR); // Multicast address
-        target_addr.sin_port = htons(SSDPPORT);
-        dest_addr = &target_addr; // Point to our local address structure
-    }
-    if (strcmp(type, "alive") == 0) {
-        snprintf(message, sizeof(message),
-           "NOTIFY* HTTP/1.1\r\n"
-            "HOST: %s:%d\r\n"
-            "NT:%s\r\n" //type
-            "NTS:ssdp:alive\r\n"//subtype
-            "USN:%s\r\n" //unique name
-            "LOCATION:%s\r\n"
-            "\r\n", ssdp_location, ssdp_nt, ssdp_usn);
-            //TODO receive and process the response if needed
-    }
-    else if (strcmp(type, "byebye") == 0) {
-        snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n"
-            "HOST: %s:%d\r\n"
-            "NT:%s\r\n" //type
-            "NTS:ssdp:byebye\r\n" //subtype
-            "USN:%s\r\n" //unique name
-            "\r\n", SSDP_ADDR, SSDPPORT,ssdp_nt,ssdp_usn);
-              //TODO receive and process the response if needed
-        }
-    else {
-        fprintf(stderr, "Unknown SSDP message type: %s\n", type);
-        return;
-    }
-
-
-}*/
-
-// TODO implement device HTTP description retrieval from server.c
 
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
