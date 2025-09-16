@@ -28,6 +28,12 @@ const char *ssdp_st = "ssdp:projekat";
 const char *ssdp_location = "None"; // or idk
 // Global control variable
 static volatile int running = 1;
+// Thresholds
+int vibration_warning_threshold = 10;
+int vibration_alert_threshold = 20;
+int tilt_warning_threshold = 0.25;
+int tilt_alert_threshold = 0.5;
+char *state = "OK";
 
 // Function prototypes 
 void remove_device_by_id(const char *id);
@@ -378,7 +384,7 @@ int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size) 
     if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         close(sockfd); return -1;
     }
-
+        // Send HTTP GET request
     snprintf(request, sizeof(request),
         "GET /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
     send(sockfd, request, strlen(request), 0);
@@ -415,7 +421,26 @@ void remove_device_by_id(const char *id) {
             }
         }
     }
+
 }
+
+char *make_status_json(const char *type, float number, const char *state) {
+    cJSON *root = cJSON_CreateObject();
+    if (strcmp(type, "vibration") == 0) {
+        cJSON_AddNumberToObject(root, "vibration", number);
+    } else if (strcmp(type, "tilt") == 0) {
+        cJSON_AddNumberToObject(root, "tilt", number);
+    } else {
+        cJSON_AddStringToObject(root, "error", "unknown type");
+        cJSON_AddNumberToObject(root, "error_value", number);
+    }
+    cJSON_AddStringToObject(root, "state", state);
+
+    char *json_str = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    return json_str; // TODO always fre  with cJSON_free() after publishing
+}
+
 
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
@@ -443,7 +468,42 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
     if(strcmp(msg->topic, "VibeCheck/sensors/vibration") == 0) {
         // Handle vibration sensor data
         printf("Vibration sensor data received: %s\n", (char *)msg->payload);
-        
+        int vibration = atoi((char *)msg->payload);
+        const char *sirena_msg = "OFF";
+        const char *led_msg = "OFF";
+        else if (vibration >= vibration_alert_threshold) {
+            sirena_msg = "STEADY";
+            led_msg = "FAST";
+            state = "ALERT";
+
+        } else if (vibration >= vibration_warning_threshold) {
+            if (strcmp(state, "ALERT") != 0){
+                 sirena_msg = "INTERMITTENT";
+                 led_msg = "SLOW";
+                 state = "WARNING";
+                }
+         
+        }
+
+        // Publish to sirena
+        int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/acct/control", strlen(sirena_msg), sirena_msg, 0, false);
+        if (ret1 != MOSQ_ERR_SUCCESS) {
+            fprintf(stderr, "Failed to publish to sirena: %s\n", mosquitto_strerror(ret1));
+        } else {
+            printf("Published to sirena: %s\n", sirena_msg);
+        }
+        // Publish to LEDd 
+        int ret2 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(led_msg), led_msg, 0, false);
+        if (ret2 != MOSQ_ERR_SUCCESS) {
+            fprintf(stderr, "Failed to publish to LED: %s\n", mosquitto_strerror(ret2));
+        } else {
+            printf("Published to LED: %s\n", led_msg);
+        }
+        // Publish status JSON
+        char *json_str = make_status_json("vibration", vibration, state);
+        mosquitto_publish(mosq, NULL, "VibeCheck/status", strlen(json_str), json_str, 0, false);
+        cJSON_free(json_str);   
+
     } else if(strcmp(msg->topic, "VibeCheck/sensors/tilt") == 0) {
         // Handle tilt sensor data
         printf("Tilt sensor data received: %s\n", (char *)msg->payload);
@@ -465,7 +525,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
-    printf("Message %d has been published.\n", mid);
+    printf("Message -> %d <- has been published to %s.\n", mid, (char *)obj);
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
