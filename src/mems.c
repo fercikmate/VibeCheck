@@ -229,6 +229,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     {
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/mems", 0);
+        
         puts("Subscribed successfully.");
     }
     else
@@ -296,7 +297,7 @@ int main()
     
     // Set last will and testament
     const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq, LWTTopic, strlen(ssdp_usn), ssdp_usn, 0, false);
+    mosquitto_will_set(mosq, LWTTopic, strlen(ssdp_usn), ssdp_usn, 0, false);//send device usn on ungraceful disconnect
 
     printf("Type q to quit...\n\n");
     mosquitto_loop_start(mosq);

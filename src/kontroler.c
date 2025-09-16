@@ -9,6 +9,7 @@
 #include <mosquitto.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <netdb.h>
 #include <cjson/cJSON.h>
 
 #define MQTTPORT 1883
@@ -18,8 +19,8 @@
 
 #define MAX_DEVICES 8
 // array of devices
-cJSON *device_list[MAX_DEVICES];
-
+cJSON *device_info[MAX_DEVICES];
+cJSON *device_status[MAX_DEVICES];
 // Global device information
 const char *ssdp_usn = "Kontroler";
 const char *ssdp_nts = "device:alive";
@@ -28,8 +29,10 @@ const char *ssdp_location = "None"; // or idk
 // Global control variable
 static volatile int running = 1;
 
-// Function prototype for sendg/get_ssdp_message
+// Function prototypes 
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
+int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
+const char *get_device_id(cJSON *device_json);
 // void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) ;
 
 
@@ -119,6 +122,7 @@ void *multicast_listener(void *arg)
             else
             {
                 msgbuf[nbytes] = '\0';
+               char location_url[256];
 
                 //   if (strstr(msgbuf, "USN") != NULL){ // TODO  select only the devices with names
                 //  printf("Received from %s:\n%s\n", inet_ntoa(sender_addr.sin_addr), msgbuf); print address
@@ -127,8 +131,23 @@ void *multicast_listener(void *arg)
                     if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:alive") != NULL)
                     {
                         printf("ALIVE received: %s\n", msgbuf);
-                        //           get_ssdp_message(ssdp_sockfd, &sender_addr, "alive");
-                        // TODO add to device list
+                        char json_buffer[2048];
+                        sscanf(strstr(msgbuf, "LOCATION: "), "LOCATION: %[^\r\n]", location_url);
+                        if (strcmp(location_url, "None") != 0) {
+                            if (fetch_json_from_url(location_url, json_buffer, sizeof(json_buffer)) == 0) {
+                                cJSON *json = cJSON_Parse(json_buffer);
+                                if (json) {
+                                    // Store in device_info array (find a free slot)
+                                    for (int i = 0; i < MAX_DEVICES; ++i) {
+                                        if (device_info[i] == NULL) {
+                                            device_info[i] = json;
+                                            printf("Added device: %s\n", get_device_id(json));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
                     }
                     if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:byebye") != NULL)
@@ -141,11 +160,26 @@ void *multicast_listener(void *arg)
                 else if (strstr(msgbuf, "HTTP/1.1 200 OK") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
                 {
                     printf("RESPONSE received: %s\n", msgbuf);
-                    // TODO but can be done her get_ssdp_message(ssdp_sockfd, &sender_addr, "response");
-                    // TODO add to device list
-                    // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
-                }
-                //  }
+                    char json_buffer[2048];
+                    sscanf(strstr(msgbuf, "LOCATION: "), "LOCATION: %[^\r\n]", location_url);
+                    if (strcmp(location_url, "None") != 0) {
+                        if (fetch_json_from_url(location_url, json_buffer, sizeof(json_buffer)) == 0) {
+                            cJSON *json = cJSON_Parse(json_buffer);
+                            if (json) {
+                                // Store in device_info array (find a free slot)
+                                for (int i = 0; i < MAX_DEVICES; ++i) {
+                                    if (device_info[i] == NULL) {
+                                        device_info[i] = json;
+                                        printf("Added device: %s\n", get_device_id(json));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
+                    }
+                    //  }
+                }  
             }
         }
     }
@@ -157,6 +191,7 @@ void *multicast_listener(void *arg)
     printf("SSDP listener stopped.\n");
     pthread_exit(NULL);
 }
+
 
 // create thread function to start SSDP
 void ssdp_start()
@@ -217,6 +252,87 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
     }
 }
 
+int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size) {
+    // Example: "http://127.0.0.1:8080/sirena.json"
+    const char *ip_start;
+    const char *ip_end;
+    const char *port_start;
+    const char *port_end;
+
+    // Find "://"
+    ip_start = strstr(url, "://");
+    if (!ip_start) return -1;
+    ip_start += 3; // move past "://"
+
+    // Find ':'
+    ip_end = strchr(ip_start, ':');
+    if (!ip_end) return -1;
+
+    // Extract host
+    char host[128];
+    size_t host_len = ip_end - ip_start;
+    if (host_len >= sizeof(host)) return -1;
+    strncpy(host, ip_start, host_len);
+    host[host_len] = '\0';
+
+    // Find port start and end
+    port_start = ip_end + 1;
+    port_end = strchr(port_start, '/');
+    if (!port_end) return -1;
+
+    // Extract port
+    char port_str[8];
+    size_t port_len = port_end - port_start;
+    if (port_len >= sizeof(port_str)) return -1;
+    strncpy(port_str, port_start, port_len);
+    port_str[port_len] = '\0';
+    int port = atoi(port_str);
+    if (port <= 0) return -1;
+
+    // Path starts after '/'
+    const char *path = port_end + 1;
+    if (!path) return -1;
+
+    // Now path points to "sirena.json" or whatever
+    int sockfd;
+    struct sockaddr_in serv_addr;
+    struct hostent *server;
+    char request[256];
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) return -1;
+
+    server = gethostbyname(host);
+    if (!server) { close(sockfd); return -1; }
+
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    memcpy(&serv_addr.sin_addr.s_addr, server->h_addr, server->h_length);
+    serv_addr.sin_port = htons(port);
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+        close(sockfd); return -1;
+    }
+
+    snprintf(request, sizeof(request),
+        "GET /%s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", path, host);
+    send(sockfd, request, strlen(request), 0);
+
+    int total = 0, n;
+    while ((n = recv(sockfd, json_buffer + total, buffer_size - total - 1, 0)) > 0) {
+        total += n;
+        if (total >= buffer_size - 1) break;
+    }
+    json_buffer[total] = '\0';
+    close(sockfd);
+
+    // Find start of JSON in HTTP response
+    char *json_start = strchr(json_buffer, '{');
+    if (!json_start) return -1;
+    memmove(json_buffer, json_start, strlen(json_start) + 1);
+    return 0;
+}
+
 const char *get_device_id(cJSON *device_json) {
     cJSON *id_item = cJSON_GetObjectItem(device_json, "id");
     return cJSON_IsString(id_item) ? id_item->valuestring : NULL;
@@ -228,6 +344,11 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     {
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/control/status", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/vibration", 0);
+        mosqitto_subscribe(mosq, NULL, "VibeCheck/sensors/tilt", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/threshold/change", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/+/disconnected", 0);
+
         puts("Subscribed successfully.");
     }
     else
