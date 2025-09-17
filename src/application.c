@@ -9,11 +9,16 @@
 #include <mosquitto.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <cjson/cJSON.h>
 
 #define MQTTPORT 1883
 #define SSDPPORT 1900
 #define SSDP_ADDR "239.255.255.250"
 
+
+double currentVibration = 0.0;
+double currentTilt = 0.0;
+char currentState[64] = "OK";
 // Global device information
 const char *ssdp_nt = "device:alive";
 const char *ssdp_usn = "Application";
@@ -237,7 +242,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 {
     // Print the topic for the first message received, then disconnect
     printf("Topic: %s\n", msg->topic);
-    mosquitto_disconnect(mosq);
+   
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -263,7 +268,7 @@ int main()
 
     // initialze mosquitto broker
     struct mosquitto *mosq;
-    int rc;
+
     mosquitto_lib_init();
 
     mosq = mosquitto_new(NULL, true, NULL);
@@ -278,11 +283,10 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
-    char cmd[256];
+    // Connect to broker
+    int rc;
     while (1)
     {
-        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
-            break;  
         rc = mosquitto_connect(mosq, "localhost", MQTTPORT, 60);
         if (rc == MOSQ_ERR_SUCCESS)
         {
@@ -292,9 +296,67 @@ int main()
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
-    ssdp_start(); // start SSDP
 
-    mosquitto_loop_forever(mosq, -1, 1);
+    mosquitto_loop_start(mosq); // Start MQTT loop in background
+
+    char cmd[256];
+    printf("Type threshold change commands:\n");
+    printf("  Vibration <warning> <alert>\n");
+    printf("  Tilt <warning> <alert>\n");
+    printf("Type q to quit...\n");
+
+    while (1)
+    {
+        if (fgets(cmd, sizeof(cmd), stdin) == NULL)
+            break;
+        cmd[strcspn(cmd, "\n")] = 0;
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
+            break;
+
+        if (strncmp(cmd, "Vibration ", 10) == 0) {
+            double warning, alert;
+            if (sscanf(cmd + 10, "%lf %lf", &warning, &alert) == 2) {
+                if (alert <= warning) {
+                    printf("Error: Alert threshold must be greater than warning threshold!\n");
+                    continue;   
+                }
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "type", "VibrationThresholds");
+                cJSON_AddNumberToObject(json, "warning", warning);
+                cJSON_AddNumberToObject(json, "alert", alert);
+                char *payload = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/threshold/change", strlen(payload), payload, 0, false);
+                cJSON_free(payload);
+                cJSON_Delete(json);
+                printf("Sent Vibration thresholds: warning=%f, alert=%f\n", warning, alert);
+            } else {
+                printf("Usage: Vibration <warning> <alert>\n");
+            }
+        } else if (strncmp(cmd, "Tilt ", 5) == 0) {
+            double warning, alert;
+            if (sscanf(cmd + 5, "%lf %lf", &warning, &alert) == 2) {
+                if (alert <= warning) {
+                    printf("Error: Alert threshold must be greater than warning threshold!\n");
+                    continue;
+                }
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "type", "TiltThresholds");
+                cJSON_AddNumberToObject(json, "warning", warning);
+                cJSON_AddNumberToObject(json, "alert", alert);
+                char *payload = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/threshold/change", strlen(payload), payload, 0, false);
+                cJSON_free(payload);
+                cJSON_Delete(json);
+                printf("Sent Tilt thresholds: warning=%f, alert=%f\n", warning, alert);
+            } else {
+                printf("Usage: Tilt <warning> <alert>\n");
+            }
+        } else {
+            printf("Unknown command. Usage:\n  Vibration <warning> <alert>\n  Tilt <warning> <alert>\n");
+        }
+    }
+
+    mosquitto_loop_stop(mosq, true);
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
 

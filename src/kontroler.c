@@ -543,7 +543,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 cJSON_AddStringToObject(json, "state", state);
                 char *vibmsg = cJSON_PrintUnformatted(json);
                 mosquitto_publish(mosq, NULL, "VibeCheck/app/vibration", strlen(vibmsg), vibmsg, 0, false);
-                printf("Published to app: %s\n", vibmsg);
+                printf("Published to app: %s\n\n", vibmsg);
                 cJSON_free(vibmsg);
                 cJSON_Delete(json);
             } else {
@@ -624,7 +624,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 cJSON_AddStringToObject(json, "state", state);
                 char *tiltmsg = cJSON_PrintUnformatted(json);
                 mosquitto_publish(mosq, NULL, "VibeCheck/app/tilt", strlen(tiltmsg), tiltmsg, 0, false);
-                printf("Published to app: %s\n", tiltmsg);
+                printf("Published to app: %s\n\n", tiltmsg);
                 cJSON_free(tiltmsg);
                 cJSON_Delete(json);
             } else {
@@ -640,31 +640,28 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         cJSON *root = cJSON_Parse((char *)msg->payload);
         if (root) {
             cJSON *type_item = cJSON_GetObjectItem(root, "type");
-            cJSON *value_item = cJSON_GetObjectItem(root, "value");
-            if (cJSON_IsString(type_item) && cJSON_IsNumber(value_item)) {
-                const char *type = type_item->valuestring;
-                double value = value_item->valuedouble;
-                if (strcmp(type, "VibrationWarningThreshold") == 0) {
-                    vibration_warning_threshold = value;
-                    printf("Set vibration_warning_threshold to %f\n", vibration_warning_threshold);
-                } else if (strcmp(type, "VibrationAlertThreshold") == 0) {
-                    vibration_alert_threshold = value;
-                    printf("Set vibration_alert_threshold to %f\n", vibration_alert_threshold);
-                } else if (strcmp(type, "TiltWarningThreshold") == 0) {
-                    tilt_warning_threshold = value;
-                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold); 
-                } else if (strcmp(type, "TiltAlertThreshold") == 0) {
-                    tilt_alert_threshold = value;
-                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold); 
-                } else {
-                    printf("Unknown threshold type: %s\n", type);
+            if (cJSON_IsString(type_item)) {
+                if (strcmp(type_item->valuestring, "VibrationThresholds") == 0) {
+                    cJSON *warning_item = cJSON_GetObjectItem(root, "warning");
+                    cJSON *alert_item = cJSON_GetObjectItem(root, "alert");
+                    if (cJSON_IsNumber(warning_item) && cJSON_IsNumber(alert_item)) {
+                        vibration_warning_threshold = warning_item->valuedouble;
+                        vibration_alert_threshold = alert_item->valuedouble;
+                        printf("Set vibration_warning_threshold to %f\n", vibration_warning_threshold);
+                        printf("Set vibration_alert_threshold to %f\n\n", vibration_alert_threshold);
+                    }
+                } else if (strcmp(type_item->valuestring, "TiltThresholds") == 0) {
+                    cJSON *warning_item = cJSON_GetObjectItem(root, "warning");
+                    cJSON *alert_item = cJSON_GetObjectItem(root, "alert");
+                    if (cJSON_IsNumber(warning_item) && cJSON_IsNumber(alert_item)) {
+                        tilt_warning_threshold = warning_item->valuedouble;
+                        tilt_alert_threshold = alert_item->valuedouble;
+                        printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold);
+                        printf("Set tilt_alert_threshold to %f\n\n", tilt_alert_threshold);
+                    }
                 }
-            } else {
-                printf("Invalid threshold change JSON: missing or wrong type for type/value\n");
             }
             cJSON_Delete(root);
-        } else {
-            printf("Failed to parse threshold change JSON\n");
         }
     } else if(strstr(msg->topic, "/disconnected") != NULL) {
         // Handle device disconnection
