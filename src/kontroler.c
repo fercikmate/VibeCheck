@@ -42,7 +42,7 @@ void remove_device_by_id(const char *id);
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
 int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
 const char *get_device_id(cJSON *device_json);
-
+void publish_device_list(struct mosquitto *mosq);
 
 
 
@@ -183,8 +183,12 @@ void *multicast_listener(void *arg)
                                                     if (ret != MOSQ_ERR_SUCCESS) {
                                                         fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
                                                     } else {
-                                                        printf("Sent device connected notification for device!\n\n");
+                                                        printf("Sent device connected notification for device!\n");
                                                     }
+
+                                                    // Publish updated device list to app
+                                                    publish_device_list(mosq);
+
                                                     break;
                                                 }
                                             }
@@ -261,8 +265,12 @@ void *multicast_listener(void *arg)
                                         if (ret != MOSQ_ERR_SUCCESS) {
                                             fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
                                         } else {
-                                            printf("Sent device connected notification for device!\n\n"); //TODO terminate second instance of device
+                                            printf("Sent device connected notification for device!\n"); //TODO terminate second instance of device
                                         }
+
+                                        // Publish updated device list to app
+                                        publish_device_list(mosq);
+
                                         break;
                                     }
                                 }
@@ -347,6 +355,23 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
     {
         printf("SSDP %s message sent:\n%s\n", type, message);
     }
+}
+
+void publish_device_list(struct mosquitto *mosq) {
+    cJSON *id_array = cJSON_CreateArray();
+    for (int j = 0; j < MAX_DEVICES; ++j) {
+        if (device_info[j] != NULL) {
+            const char *dev_id = get_device_id(device_info[j]);
+            if (dev_id) {
+                cJSON_AddItemToArray(id_array, cJSON_CreateString(dev_id));
+            }
+        }
+    }
+    char *payload = cJSON_PrintUnformatted(id_array);
+    mosquitto_publish(mosq, NULL, "VibeCheck/app/devices", strlen(payload), payload, 0, false);
+    printf("Published device list to app: %s\n\n", payload);
+    cJSON_free(payload);
+    cJSON_Delete(id_array);
 }
 
 int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size) {
@@ -514,11 +539,13 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                     led_msg = "FAST";
                     state = "ALERT";
                 } else if (vibration >= vibration_warning_threshold) {
-                    if (strcmp(state, "ALERT") != 0){
-                        sirena_msg = "INTERMITTENT";
-                        led_msg = "SLOW";
-                        state = "WARNING";
-                    }
+                    sirena_msg = "INTERMITTENT";
+                    led_msg = "SLOW";
+                    state = "WARNING";
+                } else {
+                    sirena_msg = "OFF";
+                        led_msg = "OFF";
+                        state = "OK";
                 }
                 // Publish to sirena
                 int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/sirena", strlen(sirena_msg), sirena_msg, 0, false);
@@ -593,11 +620,13 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                     led_msg = "FAST";
                     state = "ALERT";
                 } else if (tilt >= tilt_warning_threshold) {
-                    if (strcmp(state, "ALERT") != 0){
                         sirena_msg = "INTERMITTENT";
                         led_msg = "SLOW";
                         state = "WARNING";
-                    }
+                } else {
+                        sirena_msg = "OFF";
+                        led_msg = "OFF";
+                        state = "OK";
                 }
 
                 // Publish to sirena

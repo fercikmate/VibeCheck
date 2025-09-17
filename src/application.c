@@ -16,9 +16,18 @@
 #define SSDP_ADDR "239.255.255.250"
 
 
+#define MAX_DEVICES 8
+#define MAX_ID_LEN 64
+
 double currentVibration = 0.0;
 double currentTilt = 0.0;
-char currentState[64] = "OK";
+//char currentStateSystem[64] = "OK";
+char currentStateVibration[64] = "OK";
+char currentStateTilt[64] = "OK";
+double VibrationWarningThreshold = 10.0;
+double VibrationAlertThreshold = 20.0;
+double TiltWarningThreshold = 0.25;
+double TiltAlertThreshold = 0.5;
 // Global device information
 const char *ssdp_nt = "device:alive";
 const char *ssdp_usn = "Application";
@@ -26,8 +35,12 @@ const char *ssdp_location = "None"; // or idk
 // Global control variable
 static volatile int running = 1;
 
-// Function prototype for send_ssdp_message
+char device_ids[MAX_DEVICES][MAX_ID_LEN];
+int device_count = 0;
+
+// Function prototype
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
+void print_status();
 
 void *multicast_listener(void *arg)
 {
@@ -228,7 +241,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/app/vibration", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/app/tilt", 0);
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/app/generalstate", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/app/devices", 0);
         puts("Subscribed successfully.");
     }
     else
@@ -240,11 +253,72 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
-    printf("Topic: %s\n", msg->topic);
-   
+    if (strcmp(msg->topic, "VibeCheck/app/vibration") == 0) {
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *vib_item = cJSON_GetObjectItem(root, "vibration");
+            cJSON *state_item = cJSON_GetObjectItem(root, "state");
+            if (cJSON_IsNumber(vib_item)) {
+                currentVibration = vib_item->valuedouble;
+            }
+            if (cJSON_IsString(state_item)) {
+                strncpy(currentStateVibration, state_item->valuestring, sizeof(currentStateVibration)-1);
+                currentStateVibration[sizeof(currentStateVibration)-1] = '\0';
+            }
+            cJSON_Delete(root);
+        }
+    } else if (strcmp(msg->topic, "VibeCheck/app/tilt") == 0) {
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *tilt_item = cJSON_GetObjectItem(root, "tilt");
+            cJSON *state_item = cJSON_GetObjectItem(root, "state");
+            if (cJSON_IsNumber(tilt_item)) {
+                currentTilt = tilt_item->valuedouble;
+            }
+            if (cJSON_IsString(state_item)) {
+                strncpy(currentStateTilt, state_item->valuestring, sizeof(currentStateTilt)-1);
+                currentStateTilt[sizeof(currentStateTilt)-1] = '\0';
+            }
+            cJSON_Delete(root);
+        }
+    } else if (strcmp(msg->topic, "VibeCheck/app/devices") == 0) {
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root && cJSON_IsArray(root)) {
+            // Clear old list
+            device_count = 0;
+            // Parse new list
+            int arr_size = cJSON_GetArraySize(root);
+            for (int i = 0; i < arr_size && i < MAX_DEVICES; ++i) {
+                cJSON *item = cJSON_GetArrayItem(root, i);
+                if (cJSON_IsString(item)) {
+                    strncpy(device_ids[device_count], item->valuestring, MAX_ID_LEN-1);
+                    device_ids[device_count][MAX_ID_LEN-1] = '\0';
+                    device_count++;
+                }
+            }
+            cJSON_Delete(root);
+        } else if (root) {
+            cJSON_Delete(root);
+        }
+    }
+    print_status();
 }
 
+void print_status()
+{
+    puts("----- Current Status -----");
+    printf("Current Vibration: %.2f\n", currentVibration);
+    printf("Current Tilt: %.2f\n", currentTilt);
+    printf("Current State (Vibration): %s\n", currentStateVibration);
+    printf("Current State (Tilt): %s\n", currentStateTilt);
+    printf("Vibration Thresholds: Warning=%.2f, Alert=%.2f\n", VibrationWarningThreshold, VibrationAlertThreshold);
+    printf("Tilt Thresholds: Warning=%.2f, Alert=%.2f\n", TiltWarningThreshold, TiltAlertThreshold);
+    printf("Online Devices (%d):\n", device_count);
+    for (int i = 0; i < device_count; ++i) {
+        printf("--> %s\n", device_ids[i]);
+    }
+    puts("--------------------------\n");
+}
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
     printf("Message %d has been published.\n", mid);
@@ -320,6 +394,8 @@ int main()
                     printf("Error: Alert threshold must be greater than warning threshold!\n");
                     continue;   
                 }
+                VibrationWarningThreshold = warning;
+                VibrationAlertThreshold = alert;
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "type", "VibrationThresholds");
                 cJSON_AddNumberToObject(json, "warning", warning);
@@ -339,6 +415,8 @@ int main()
                     printf("Error: Alert threshold must be greater than warning threshold!\n");
                     continue;
                 }
+                TiltWarningThreshold = warning;
+                TiltAlertThreshold = alert;
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddStringToObject(json, "type", "TiltThresholds");
                 cJSON_AddNumberToObject(json, "warning", warning);
