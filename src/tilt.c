@@ -346,6 +346,10 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
+    // Set last will and testament
+    char LWTTopic[64];
+    snprintf(LWTTopic, sizeof(LWTTopic), "VibeCheck/%s/disconnected", usn);
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
     // Connect to broker
     while (1)
     {
@@ -359,9 +363,7 @@ int main()
         sleep(5);
     }
 
-    // Set last will and testament
-    const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
+ 
 
     mosquitto_loop_start(mosq);
     ssdp_start();

@@ -15,11 +15,13 @@
 #define SSDP_ADDR "239.255.255.250"
 
 // Global device information
-const char *ssdp_nt = "device:alive";
+const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
+const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
 const char *usn = "LED_actuator";
-const char *ssdp_location = "http://192.168.1.100:8080/led.json"; // or idk
+const char *ssdp_location = "http://127.0.0.1:8080/led.json"; // or idk
 // Global control variable
 static volatile int running = 1;
+bool connected = false;
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
@@ -111,14 +113,11 @@ void *multicast_listener(void *arg)
             {
                 msgbuf[nbytes] = '\0';
 
-                if (strstr(msgbuf, "M-SEARCH") != NULL)
+                if (strstr(msgbuf, "M-SEARCH") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
                 {
-
-                    if (strstr(msgbuf, "ST:ssdp:projekat\r\n") != NULL)
-                    { // TODO  select only the devices needed for project
-                        printf("M-SEARCH received: %s\n", msgbuf);
-                        send_ssdp_message(ssdp_sockfd, &sender_addr, "response");
-                    }
+                     // TODO  select only the devices needed for project
+                    printf("M-SEARCH received: %s\n", msgbuf);
+                    send_ssdp_message(ssdp_sockfd, &sender_addr, "response");
                 }
             }
         }
@@ -163,28 +162,39 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
         target_addr.sin_port = htons(SSDPPORT);
         dest_addr = &target_addr; // Point to our local address structure
     }
+        // if sockfd is invalid, create a temporary socket
+    if (sockfd == -1 || sockfd == 0)
+    {
+        int local_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (local_sockfd < 0)
+        {
+            perror("Failed to create local socket for SSDP message");
+            return;
+        }
+        sockfd = local_sockfd;
+    }
     if (strcmp(type, "alive") == 0)
     {
         snprintf(message, sizeof(message),
                  "NOTIFY * HTTP/1.1\r\n"
                  "HOST: %s:%d\r\n"
-                 "NT:%s\r\n"          // type
-                 "NTS:ssdp:alive\r\n" // subtype
-                 "USN:%s\r\n"         // unique name
-                 "LOCATION:%s\r\n"
+                 "NT: %s\r\n"       // type, but cheating SSDP protocol by ssdp:projekat
+                 "NTS: %s\r\n"      // subtype
+                 "USN: %s\r\n"      // unique name
+                 "LOCATION: %s\r\n" // TODO add proper ip:port.json
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nt, usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
         snprintf(message, sizeof(message),
                  "NOTIFY * HTTP/1.1\r\n"
                  "HOST: %s:%d\r\n"
-                 "NT:%s\r\n"           // type
-                 "NTS:ssdp:byebye\r\n" // subtype
-                 "USN:%s\r\n"          // unique name
+                 "NT: %s\r\n"           // type
+                 "NTS: ssdp:byebye\r\n" // subtype
+                 "USN: %s\r\n"          // unique name
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nt, usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -193,11 +203,11 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "CACHE-CONTROL: max-age=1800\r\n"
                  //"DATE: \r\n"
                  //"EXT:\r\n"
-                 "LOCATION:%s\r\n"
-                 "ST:%s\r\n"
-                 "USN:%s\r\n"
+                 "LOCATION: %s\r\n"
+                 "ST: %s\r\n"
+                 "USN: %s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_nt, usn);
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
@@ -245,6 +255,10 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         } else {
             printf("LED: Unknown command: %s\n", cmd);
         }
+    }else if (strstr(msg->topic, usn) != NULL) {
+        connected = true;
+        printf("The device is connected to the controller: %s\n", msg->topic);
+        printf("Type q to quit...\n\n");
     }
 }
 
@@ -287,6 +301,10 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
+    char LWTTopic[64];
+    snprintf(LWTTopic, sizeof(LWTTopic), "VibeCheck/%s/disconnected", usn);
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
+
     // connect to broker
     while (1)
     {
@@ -299,14 +317,6 @@ int main()
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
-
-    const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq,
-                       LWTTopic,
-                       strlen(usn),
-                       usn,
-                       0,
-                       false);
 
     printf("Type q to quit...\n\n");
     mosquitto_loop_start(mosq);

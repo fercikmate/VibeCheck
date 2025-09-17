@@ -215,6 +215,7 @@ void *multicast_listener(void *arg)
                         printf("BYEBYE received: %s", msgbuf);
                         sscanf(strstr(msgbuf, "USN: "), "USN: %63[^\r\n]", device_id);
                         remove_device_by_id(device_id);
+                        publish_device_list(mosq);
                         
                     }
                 }
@@ -698,9 +699,13 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         // Handle device disconnection
         char device_id[64];
         if (sscanf(msg->topic, "VibeCheck/%63[^/]/disconnected", device_id) == 1) {
+            printf("Device ungracefully disconnected: %s\n", (char *)msg->payload);
             remove_device_by_id(device_id);
+            publish_device_list(mosq);
+        } 
+        else {
+            printf("Invalid disconnected topic format: %s\n", msg->topic);
         }
-        printf("Device disconnected: %s\n", (char *)msg->payload);
         
     } else if(strcmp(msg->topic, "VibeCheck/control/command") == 0) {
         printf("Received actuator command: %s\n", (char *)msg->payload);
