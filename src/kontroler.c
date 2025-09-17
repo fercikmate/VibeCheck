@@ -485,9 +485,9 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/vibration", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/sensors/tilt", 0);
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/threshold/change", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/control/thresholds", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/+/disconnected", 0);
-
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/control/command", 0);
         puts("Subscribed successfully.");
     }
     else
@@ -663,7 +663,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         } else {
             printf("Failed to parse tilt JSON\n");
         }
-    } else if(strcmp(msg->topic, "VibeCheck/threshold/change") == 0) {
+    } else if(strcmp(msg->topic, "VibeCheck/control/thresholds") == 0) {
         // Handle threshold change command
         printf("Threshold change command received: %s\n", (char *)msg->payload);
         cJSON *root = cJSON_Parse((char *)msg->payload);
@@ -674,8 +674,10 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                     cJSON *warning_item = cJSON_GetObjectItem(root, "warning");
                     cJSON *alert_item = cJSON_GetObjectItem(root, "alert");
                     if (cJSON_IsNumber(warning_item) && cJSON_IsNumber(alert_item)) {
+                        
                         vibration_warning_threshold = warning_item->valuedouble;
                         vibration_alert_threshold = alert_item->valuedouble;
+                       
                         printf("Set vibration_warning_threshold to %f\n", vibration_warning_threshold);
                         printf("Set vibration_alert_threshold to %f\n\n", vibration_alert_threshold);
                     }

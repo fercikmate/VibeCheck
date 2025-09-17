@@ -401,13 +401,17 @@ int main()
                 cJSON_AddNumberToObject(json, "warning", warning);
                 cJSON_AddNumberToObject(json, "alert", alert);
                 char *payload = cJSON_PrintUnformatted(json);
-                mosquitto_publish(mosq, NULL, "VibeCheck/threshold/change", strlen(payload), payload, 0, false);
+                mosquitto_publish(mosq, NULL, "VibeCheck/control/thresholds", strlen(payload), payload, 0, false);
                 cJSON_free(payload);
                 cJSON_Delete(json);
                 printf("Sent Vibration thresholds: warning=%f, alert=%f\n", warning, alert);
-            } else {
-                printf("Usage: Vibration <warning> <alert>\n");
-            }
+                if (warning < VibrationWarningThreshold){
+                    strcpy(currentStateVibration, "OK"); // reset state to force update
+                }
+                if (alert < VibrationAlertThreshold){
+                    strcpy(currentStateVibration, "OK"); // reset state to force update
+                }
+            } 
         } else if (strncmp(cmd, "Tilt ", 5) == 0) {
             double warning, alert;
             if (sscanf(cmd + 5, "%lf %lf", &warning, &alert) == 2) {
@@ -422,15 +426,47 @@ int main()
                 cJSON_AddNumberToObject(json, "warning", warning);
                 cJSON_AddNumberToObject(json, "alert", alert);
                 char *payload = cJSON_PrintUnformatted(json);
-                mosquitto_publish(mosq, NULL, "VibeCheck/threshold/change", strlen(payload), payload, 0, false);
+                mosquitto_publish(mosq, NULL, "VibeCheck/control/thresholds", strlen(payload), payload, 0, false);
                 cJSON_free(payload);
                 cJSON_Delete(json);
                 printf("Sent Tilt thresholds: warning=%f, alert=%f\n", warning, alert);
-            } else {
-                printf("Usage: Tilt <warning> <alert>\n");
-            }
+                if (warning < TiltWarningThreshold){
+                    strcpy(currentStateTilt, "OK"); // reset state to force update
+                }
+                if (alert < TiltAlertThreshold){
+                    strcpy(currentStateTilt, "OK"); // reset state to force update
+                }
+            } 
+        } else if (strncmp(cmd, "SIRENA ", 7) == 0) {
+            char value[32];
+            if (sscanf(cmd + 7, "%31s", value) == 1) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "SIRENA", value);
+                char *payload = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/control/command", strlen(payload), payload, 0, false);
+                printf("Sent SIRENA command: %s\n", payload);
+                cJSON_free(payload);
+                cJSON_Delete(json);
+            } 
+        } else if (strncmp(cmd, "LED ", 4) == 0) {
+            char value[32];
+            if (sscanf(cmd + 4, "%31s", value) == 1) {
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "LED", value);
+                char *payload = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/control/command", strlen(payload), payload, 0, false);
+                printf("Sent LED command: %s\n", payload);
+                cJSON_free(payload);
+                cJSON_Delete(json);
+            } 
         } else {
-            printf("Unknown command. Usage:\n  Vibration <warning> <alert>\n  Tilt <warning> <alert>\n");
+            printf("Unknown command. Command list: \n");
+            printf(" Threshold change:\n");
+            printf("    Vibration <warning> <alert>\n");
+            printf("    Tilt <warning> <alert>\n");
+            printf(" Actuator control:\n");
+            printf("    SIRENA <OFF|WARNING|ALERT>\n");
+            printf("    LED <OFF|WARNING|ALERT>\n\n");
         }
     }
 
