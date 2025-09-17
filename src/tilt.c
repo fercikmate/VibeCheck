@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <cjson/cJSON.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <netinet/in.h>
@@ -9,22 +10,73 @@
 #include <mosquitto.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <cjson/cJSON.h>
 
 #define MQTTPORT 1883
 #define SSDPPORT 1900
 #define SSDP_ADDR "239.255.255.250"
 //defined by manufacturer
-#define max_tilt_threshold 15.0
-#define min_tilt_threshold -15.0
+double max_AngleX_threshold = 0.0;
+double min_AngleX_threshold = 0.0;
+double max_AngleY_threshold = 0.0;
+double min_AngleY_threshold = 0.0;
+char device_group[64] = "default_group";
 
 // Global device information
 const char *ssdp_nts = "ssdp:alive";
 const char *ssdp_st = "ssdp:projekat";
-const char *ssdp_usn = "tilt_sensor";
+const char *usn = "tilt_sensor";
 const char *ssdp_location = "http://127.0.0.1:8080/tilt.json";
 // Global control variable
 static volatile int running = 1;
+bool connected = false;
+
+
+void parse_tilt_json(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Failed to open tilt.json");
+        exit(1);
+    }
+    char buf[1024];
+    size_t len = fread(buf, 1, sizeof(buf)-1, fp);
+    buf[len] = '\0';
+    fclose(fp);
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        fprintf(stderr, "Failed to parse tilt.json\n");
+        exit(1);
+    }
+
+    cJSON *group_item = cJSON_GetObjectItem(root, "group");
+    if (cJSON_IsString(group_item)) {
+        strncpy(device_group, group_item->valuestring, sizeof(device_group)-1);
+        device_group[sizeof(device_group)-1] = '\0';
+    }
+
+    cJSON *tilt_service = cJSON_GetObjectItem(root, "TiltService");
+    if (tilt_service) {
+        cJSON *x_range = cJSON_GetObjectItem(tilt_service, "AngleX");
+        cJSON *y_range = cJSON_GetObjectItem(tilt_service, "AngleY");
+        // Expect format "min-max" (e.g., "0-15")
+        if (cJSON_IsString(x_range)) {
+            double min, max;
+            if (sscanf(x_range->valuestring, "%lf-%lf", &min, &max) == 2) {
+                min_AngleX_threshold = min;
+                max_AngleX_threshold = max;
+            }
+        }
+        if (cJSON_IsString(y_range)) {
+            double min, max;
+            if (sscanf(y_range->valuestring, "%lf-%lf", &min, &max) == 2) {
+                min_AngleY_threshold = min;
+                max_AngleY_threshold = max;
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+}
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
@@ -185,7 +237,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "USN: %s\r\n"
                  "LOCATION: %s\r\n"
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, ssdp_usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
@@ -196,7 +248,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS: ssdp:byebye\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -207,7 +259,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "ST: %s\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_st, ssdp_usn);
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
@@ -245,7 +297,8 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    if (strstr(msg->topic, ssdp_usn) != NULL) {
+    if (strstr(msg->topic, usn) != NULL) {
+        connected = true;
         printf("The device is connected to the controller: %s\n", msg->topic);
         printf("Enter sensor input:\n");
         printf("Type q to quit...\n\n");
@@ -268,12 +321,15 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
     {
         puts("Disconnected from broker.");
     }
-
+    connected = false;
     ssdp_stop();
 }
 
+
 int main()
 {
+   
+    parse_tilt_json("ServerDeviceDescriptions/tilt.json");
     struct mosquitto *mosq;
     int rc;
     mosquitto_lib_init();
@@ -305,33 +361,40 @@ int main()
 
     // Set last will and testament
     const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq, LWTTopic, strlen(ssdp_usn), ssdp_usn, 0, false);
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
 
     mosquitto_loop_start(mosq);
     ssdp_start();
 
+    
+
     char cmd[256];
-     while (1)
+    while (1)
     {
         if (fgets(cmd, sizeof(cmd), stdin) == NULL)
             break;
         cmd[strcspn(cmd, "\n")] = 0;
         if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
             break;
-        if (strlen(cmd) > 0) {
+        if (strlen(cmd) > 0 && connected) {
             double x, y;
             // Expect input as: x y
-            if (sscanf(cmd, "%lf %lf", &x, &y) != 2) {
+            if (sscanf(cmd, "%lf %lf", &x, &y ) != 2) {
                 printf("Invalid input! Please enter two numbers separated by space (e.g., 3.2 -1.5).\n");
                 continue;
             }
-            if (x < min_tilt_threshold || x > max_tilt_threshold ||
-                y < min_tilt_threshold || y > max_tilt_threshold) {
-                printf("Value out of range! Each coordinate must be between %.2f and %.2f.\n", min_tilt_threshold, max_tilt_threshold);
+            if (x < min_AngleX_threshold || x > max_AngleX_threshold) {
+                printf("X value out of range! X must be between %.2f and %.2f.\n", min_AngleX_threshold, max_AngleX_threshold);
                 continue;
             }
-            // Build JSON payload
+            if (y < min_AngleY_threshold || y > max_AngleY_threshold) {
+                printf("Y value out of range! Y must be between %.2f and %.2f.\n", min_AngleY_threshold, max_AngleY_threshold);
+                continue;
+            }
+            // Build JSON payload with id and group
             cJSON *root = cJSON_CreateObject();
+            cJSON_AddStringToObject(root, "id", usn);
+            cJSON_AddStringToObject(root, "group", device_group);
             cJSON_AddNumberToObject(root, "AngleX", x);
             cJSON_AddNumberToObject(root, "AngleY", y);
             char *payload = cJSON_PrintUnformatted(root);

@@ -278,9 +278,11 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
-    // connect to broker
+    char cmd[256];
     while (1)
     {
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
+            break;  
         rc = mosquitto_connect(mosq, "localhost", MQTTPORT, 60);
         if (rc == MOSQ_ERR_SUCCESS)
         {

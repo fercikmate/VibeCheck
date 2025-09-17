@@ -30,10 +30,10 @@ const char *ssdp_location = "None"; // or idk
 // Global control variable
 static volatile int running = 1;
 // Thresholds
-int vibration_warning_threshold = 10;
-int vibration_alert_threshold = 20;
-int tilt_warning_threshold = 0.25;
-int tilt_alert_threshold = 0.5;
+double vibration_warning_threshold = 10;
+double vibration_alert_threshold = 20;
+double tilt_warning_threshold = 0.25;
+double tilt_alert_threshold = 0.5;
 char *state = "OK";
 
 
@@ -503,7 +503,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 }
             
                 if (!found) {
-                            printf("Device not found: %s\n", device_id);                    
+                    printf("Device not found: %s\n", device_id);                    
                 }
 
                 // Actuator logic
@@ -543,6 +543,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 cJSON_AddStringToObject(json, "state", state);
                 char *vibmsg = cJSON_PrintUnformatted(json);
                 mosquitto_publish(mosq, NULL, "VibeCheck/app/vibration", strlen(vibmsg), vibmsg, 0, false);
+                printf("Published to app: %s\n", vibmsg);
                 cJSON_free(vibmsg);
                 cJSON_Delete(json);
             } else {
@@ -623,15 +624,13 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 cJSON_AddStringToObject(json, "state", state);
                 char *tiltmsg = cJSON_PrintUnformatted(json);
                 mosquitto_publish(mosq, NULL, "VibeCheck/app/tilt", strlen(tiltmsg), tiltmsg, 0, false);
+                printf("Published to app: %s\n", tiltmsg);
                 cJSON_free(tiltmsg);
                 cJSON_Delete(json);
             } else {
                 printf("Invalid tilt JSON: missing or wrong type for id/group/x/y\n");
             }
-            } else {
-                printf("Invalid tilt JSON: missing or non-numeric x/y\n");
-            }
-            cJSON_Delete(root);
+            cJSON_Delete(root); // Moved this inside the if(root) block
         } else {
             printf("Failed to parse tilt JSON\n");
         }
@@ -646,46 +645,17 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 const char *type = type_item->valuestring;
                 double value = value_item->valuedouble;
                 if (strcmp(type, "VibrationWarningThreshold") == 0) {
-                    vibration_warning_threshold = (int)value;
-                    printf("Set vibration_warning_threshold to %d\n", vibration_warning_threshold);
+                    vibration_warning_threshold = value;
+                    printf("Set vibration_warning_threshold to %f\n", vibration_warning_threshold);
                 } else if (strcmp(type, "VibrationAlertThreshold") == 0) {
-                    vibration_alert_threshold = (int)value;
-                    printf("Set vibration_alert_threshold to %d\n", vibration_alert_threshold);
+                    vibration_alert_threshold = value;
+                    printf("Set vibration_alert_threshold to %f\n", vibration_alert_threshold);
                 } else if (strcmp(type, "TiltWarningThreshold") == 0) {
                     tilt_warning_threshold = value;
-                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold);
+                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold); 
                 } else if (strcmp(type, "TiltAlertThreshold") == 0) {
                     tilt_alert_threshold = value;
-                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold);
-                } else {
-                    printf("Unknown threshold type: %s\n", type);
-                }
-            } else {
-                printf("Invalid threshold change JSON: missing or wrong type for type/value\n");
-            }
-            cJSON_Delete(root);
-        } else {
-            printf("Failed to parse threshold change JSON\n");
-        }
-        cJSON *root = cJSON_Parse((char *)msg->payload);
-        if (root) {
-            cJSON *type_item = cJSON_GetObjectItem(root, "type");
-            cJSON *value_item = cJSON_GetObjectItem(root, "value");
-            if (cJSON_IsString(type_item) && cJSON_IsNumber(value_item)) {
-                const char *type = type_item->valuestring;
-                double value = value_item->valuedouble;
-                if (strcmp(type, "VibrationWarningThreshold") == 0) {
-                    vibration_warning_threshold = (int)value;
-                    printf("Set vibration_warning_threshold to %d\n", vibration_warning_threshold);
-                } else if (strcmp(type, "VibrationAlertThreshold") == 0) {
-                    vibration_alert_threshold = (int)value;
-                    printf("Set vibration_alert_threshold to %d\n", vibration_alert_threshold);
-                } else if (strcmp(type, "TiltWarningThreshold") == 0) {
-                    tilt_warning_threshold = value;
-                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold);
-                } else if (strcmp(type, "TiltAlertThreshold") == 0) {
-                    tilt_alert_threshold = value;
-                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold);
+                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold); 
                 } else {
                     printf("Unknown threshold type: %s\n", type);
                 }
@@ -700,18 +670,15 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         // Handle device disconnection
         char device_id[64];
         if (sscanf(msg->topic, "VibeCheck/%63[^/]/disconnected", device_id) == 1) {
-            // device_id contains the ID
             remove_device_by_id(device_id);
         }
         printf("Device disconnected: %s\n", (char *)msg->payload);
-
     }
-    
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
-    printf("Message has been published! \n");
+   // printf("Message has been published! \n");
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
