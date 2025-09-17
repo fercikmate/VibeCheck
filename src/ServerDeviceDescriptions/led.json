@@ -1,5 +1,5 @@
 {
-  "id": "Warning_LED_1",
+  "id": "LED_actuator",
   "group": "actuator",
   "ContactService": {
     "State": "T/F"

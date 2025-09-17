@@ -1,5 +1,5 @@
 {
-  "id": "vibration_sensor_1",
+  "id": "mems_sensor",
   "group": "sensor",
   "ContactService": {
     "State": "T/F"

@@ -40,6 +40,7 @@ void send_response(int client_socket, const char *status, const char *body, int 
     
     send(client_socket, header, strlen(header), 0); // header first
     send(client_socket, body, content_length, 0); // body -JSON-
+    //npr "{\n  \"id\": \"vibration_sensor_1\",\n  \"group\": \"sensor\"\n}"
 }
 
 int main() {
@@ -104,7 +105,7 @@ int main() {
             printf("Request: %s %s\n", cmd, filename);
             // Build file path from descriptions dir and requested file
             char filepath[512];
-            strcpy(filepath, "./descriptions");
+            strcpy(filepath, DESCRIPTIONS_DIR);
             strcat(filepath, filename);
             
             // Try to read and serve the file

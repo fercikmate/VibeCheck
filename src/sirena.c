@@ -17,10 +17,11 @@
 // Global device information
 const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
 const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
-const char *ssdp_usn = "Sirena";
+const char *usn = "sirena_actuator";
 const char *ssdp_location = "http://127.0.0.1:8080/sirena.json";
 // Global control variable
 static volatile int running = 1;
+bool connected = false;
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
@@ -115,7 +116,6 @@ void *multicast_listener(void *arg)
 
                 if (strstr(msgbuf, "M-SEARCH") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
                 {
-
                     // select only the devices needed for project
                     printf("M-SEARCH received: %s\n", msgbuf);
                     send_ssdp_message(ssdp_sockfd, &sender_addr, "response");
@@ -184,7 +184,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "USN: %s\r\n"      // unique name
                  "LOCATION: %s\r\n" // TODO add proper ip:port.json
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, ssdp_usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
@@ -195,7 +195,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS: ssdp:byebye\r\n" // subtype
                  "USN: %s\r\n"          // unique name
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nts, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -208,7 +208,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "ST: %s\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_st, ssdp_usn);
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
@@ -232,8 +232,8 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     if (rc == 0)
     {
         puts("Subscribing to topics...");
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/audio", 0);
-        // mosquitto_subscribe(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/sirena", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
         puts("Subscribed successfully.");
     }
     else
@@ -243,10 +243,29 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     }
 }
 
+char current_state[16] = "OK";
+
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
-    printf("Topic: %s\n", msg->topic); // TODO topic msg process
+    if (strcmp(msg->topic, "VibeCheck/actuators/sirena") == 0) {
+        const char *cmd = (char *)msg->payload;
+        if (strcmp(cmd, "INTERMITTENT") == 0) {
+            printf("SIRENA: WARNING (INTERMITTENT)\n");
+            strcpy(current_state, "WARNING");
+        } else if (strcmp(cmd, "STEADY") == 0) {
+            printf("SIRENA: ALERT (STEADY)\n");
+            strcpy(current_state, "ALERT");
+        } else if (strcmp(cmd, "OFF") == 0) {
+            printf("SIRENA: System OK (OFF)\n");
+            strcpy(current_state, "OK");
+        } else {
+            printf("SIRENA: Unknown command: %s\n", cmd);
+        }
+    }else if (strstr(msg->topic, usn) != NULL) {
+        connected = true;
+        printf("The device is connected to the controller: %s\n", msg->topic);
+        printf("Type q to quit...\n\n");
+    }
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -289,6 +308,10 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
+    char LWTTopic[64];
+    snprintf(LWTTopic, sizeof(LWTTopic), "VibeCheck/%s/disconnected", usn);
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
+
     // connect to broker
     while (1)
     {
@@ -303,14 +326,7 @@ int main()
     }
     // Publish a will message on ungraceful disconnect
     // publishes the usn of the device, so the controler know which device disconnected
-    const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq,
-                       LWTTopic,
-                       strlen(ssdp_usn), // payload length
-                       ssdp_usn,         // payload
-                       0,                // qos
-                       false);           // retain
-
+    
     printf("Type q to quit...\n\n");
     mosquitto_loop_start(mosq); // runs in background
     ssdp_start();               // start SSDP
@@ -320,8 +336,9 @@ int main()
     {
         fgets(cmd, sizeof(cmd), stdin);
         cmd[strcspn(cmd, "\n")] = 0;
-        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0) {
             break;
+        }
     }
     send_ssdp_message(-1, NULL, "byebye");
     mosquitto_loop_stop(mosq, true);

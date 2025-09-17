@@ -12,20 +12,19 @@
 
 #define MQTTPORT 1883
 #define SSDPPORT 1900
-#define HTTPPORT 8080
 #define SSDP_ADDR "239.255.255.250"
 
 // Global device information
-const char *ssdp_usn = "Kontroler";
-const char *ssdp_nts = "device:alive";
-const char *ssdp_st = "ssdp:projekat";
-const char *ssdp_location = "None"; // or idk
+const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
+const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
+const char *usn = "LED_actuator";
+const char *ssdp_location = "http://127.0.0.1:8080/led.json"; // or idk
 // Global control variable
 static volatile int running = 1;
+bool connected = false;
 
-// Function prototype for sendg/get_ssdp_message
+// Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
-// void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) ;
 
 void *multicast_listener(void *arg)
 {
@@ -72,14 +71,14 @@ void *multicast_listener(void *arg)
         close(ssdp_sockfd);
         pthread_exit(NULL);
     }
-    printf("Controller SSDP listening on 239.255.255.250:%d...\n\n", SSDPPORT);
+    printf("Multicast listener started on 239.255.255.250:%d\n\n", SSDPPORT);
 
     // Make socket non-blocking
     int flags = fcntl(ssdp_sockfd, F_GETFL, 0);
     fcntl(ssdp_sockfd, F_SETFL, flags | O_NONBLOCK);
 
-    // Send initial Msearch announcement
-    send_ssdp_message(ssdp_sockfd, NULL, "M-SEARCH"); // send msearch on start to everzyone
+    // Send initial alive announcement
+    send_ssdp_message(ssdp_sockfd, NULL, "alive"); // send alive on start to everzyone
 
     // listen for multicast messages
     while (running)
@@ -106,6 +105,7 @@ void *multicast_listener(void *arg)
             {
                 if (errno != EWOULDBLOCK && errno != EAGAIN)
                 {
+
                     perror("Multicast recv failed");
                 }
             }
@@ -113,44 +113,24 @@ void *multicast_listener(void *arg)
             {
                 msgbuf[nbytes] = '\0';
 
-                //   if (strstr(msgbuf, "USN") != NULL){ // TODO  select only the devices with names
-                //  printf("Received from %s:\n%s\n", inet_ntoa(sender_addr.sin_addr), msgbuf); print address
-                if (strstr(msgbuf, "NOTIFY") != NULL)
+                if (strstr(msgbuf, "M-SEARCH") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
                 {
-                    if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:alive") != NULL)
-                    {
-                        printf("ALIVE received: %s\n", msgbuf);
-                        //           get_ssdp_message(ssdp_sockfd, &sender_addr, "alive");
-                        // TODO add to device list
-                        // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
-                    }
-                    if (strstr(msgbuf, "NT: ssdp:projekat") != NULL && strstr(msgbuf, "NTS: ssdp:byebye") != NULL)
-                    {
-                        printf("BYEBYE received: %s\n", msgbuf);
-                        //   get_ssdp_message(ssdp_sockfd, &sender_addr, "byebye");
-                        // TODO remove from device list
-                    }
+                     // TODO  select only the devices needed for project
+                    printf("M-SEARCH received: %s\n", msgbuf);
+                    send_ssdp_message(ssdp_sockfd, &sender_addr, "response");
                 }
-                else if (strstr(msgbuf, "HTTP/1.1 200 OK") != NULL && strstr(msgbuf, "ST: ssdp:projekat\r\n") != NULL)
-                {
-                    printf("RESPONSE received: %s\n", msgbuf);
-                    // TODO but can be done her get_ssdp_message(ssdp_sockfd, &sender_addr, "response");
-                    // TODO add to device list
-                    // mosquitto_publish(mosq, NULL, "VibeCheck/control/status", strlen("connected"), "connected", 0, false);
-                }
-                //  }
             }
         }
     }
     // Send byebye announcement before exiting
-    printf("Shutting down SSDP.\n");
+    printf("Shutting down SSDP. Sending byebye...\n");
+    send_ssdp_message(ssdp_sockfd, NULL, "byebye");
 
     close(ssdp_sockfd);
     ssdp_sockfd = -1;
     printf("SSDP listener stopped.\n");
     pthread_exit(NULL);
 }
-
 // create thread function to start SSDP
 void ssdp_start()
 {
@@ -182,20 +162,56 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
         target_addr.sin_port = htons(SSDPPORT);
         dest_addr = &target_addr; // Point to our local address structure
     }
-    if (strcmp(type, "M-SEARCH") == 0)
+        // if sockfd is invalid, create a temporary socket
+    if (sockfd == -1 || sockfd == 0)
+    {
+        int local_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (local_sockfd < 0)
+        {
+            perror("Failed to create local socket for SSDP message");
+            return;
+        }
+        sockfd = local_sockfd;
+    }
+    if (strcmp(type, "alive") == 0)
     {
         snprintf(message, sizeof(message),
-                 "M-SEARCH * HTTP/1.1\r\n"
+                 "NOTIFY * HTTP/1.1\r\n"
                  "HOST: %s:%d\r\n"
-                 "MAN: \"ssdp:discover\"\r\n"
-                 "MX: 3\r\n"
-                 "ST: ssdp:projekat\r\n" // type of searched device
+                 "NT: %s\r\n"       // type, but cheating SSDP protocol by ssdp:projekat
+                 "NTS: %s\r\n"      // subtype
+                 "USN: %s\r\n"      // unique name
+                 "LOCATION: %s\r\n" // TODO add proper ip:port.json
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
+    }
+    else if (strcmp(type, "byebye") == 0)
+    {
+        snprintf(message, sizeof(message),
+                 "NOTIFY * HTTP/1.1\r\n"
+                 "HOST: %s:%d\r\n"
+                 "NT: %s\r\n"           // type
+                 "NTS: ssdp:byebye\r\n" // subtype
+                 "USN: %s\r\n"          // unique name
+                 "\r\n",
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
+    }
+    else if (strcmp(type, "response") == 0)
+    {
+        snprintf(message, sizeof(message),
+                 "HTTP/1.1 200 OK\r\n"
+                 "CACHE-CONTROL: max-age=1800\r\n"
+                 //"DATE: \r\n"
+                 //"EXT:\r\n"
+                 "LOCATION: %s\r\n"
+                 "ST: %s\r\n"
+                 "USN: %s\r\n"
+                 "\r\n",
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
-        fprintf(stderr, "Controller should only send M-SEARCH, not: %s\n", type);
+        fprintf(stderr, "Unknown SSDP message type: %s\n", type);
         return;
     }
     int sent_bytes = sendto(sockfd, message, strlen(message), 0,
@@ -209,56 +225,14 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
         printf("SSDP %s message sent:\n%s\n", type, message);
     }
 }
-// get alive or byebye message
-/*void get_ssdp_message(int sockfd, struct sockaddr_in *dest_addr,const char* type) {
-    char message[512];
-    struct sockaddr_in target_addr; // Local variable for the target address
-
-    // If dest_addr is NULL, create a multicast target address
-    if (dest_addr == NULL) {
-        memset(&target_addr, 0, sizeof(target_addr));
-        target_addr.sin_family = AF_INET;
-        target_addr.sin_addr.s_addr = inet_addr(SSDP_ADDR); // Multicast address
-        target_addr.sin_port = htons(SSDPPORT);
-        dest_addr = &target_addr; // Point to our local address structure
-    }
-    if (strcmp(type, "alive") == 0) {
-        snprintf(message, sizeof(message),
-           "NOTIFY* HTTP/1.1\r\n"
-            "HOST: %s:%d\r\n"
-            "NT:%s\r\n" //type
-            "NTS:ssdp:alive\r\n"//subtype
-            "USN:%s\r\n" //unique name
-            "LOCATION:%s\r\n"
-            "\r\n", ssdp_location, ssdp_nt, ssdp_usn);
-            //TODO receive and process the response if needed
-    }
-    else if (strcmp(type, "byebye") == 0) {
-        snprintf(message, sizeof(message),
-            "NOTIFY* HTTP/1.1\r\n"
-            "HOST: %s:%d\r\n"
-            "NT:%s\r\n" //type
-            "NTS:ssdp:byebye\r\n" //subtype
-            "USN:%s\r\n" //unique name
-            "\r\n", SSDP_ADDR, SSDPPORT,ssdp_nt,ssdp_usn);
-              //TODO receive and process the response if needed
-        }
-    else {
-        fprintf(stderr, "Unknown SSDP message type: %s\n", type);
-        return;
-    }
-
-
-}*/
-
-// TODO implement device HTTP description retrieval from server.c
 
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
 {
     if (rc == 0)
     {
         puts("Subscribing to topics...");
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/control/status", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/LED", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
         puts("Subscribed successfully.");
     }
     else
@@ -270,9 +244,22 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
-    printf("Topic: %s\n", msg->topic);
-    mosquitto_disconnect(mosq);
+    if (strcmp(msg->topic, "VibeCheck/actuators/LED") == 0) {
+        const char *cmd = (char *)msg->payload;
+        if (strcmp(cmd, "OFF") == 0) {
+            printf("LED: System OK (OFF)\n");
+        } else if (strcmp(cmd, "SLOW") == 0) {
+            printf("LED: WARNING (SLOW)\n");
+        } else if (strcmp(cmd, "FAST") == 0) {
+            printf("LED: ALERT (FAST)\n");
+        } else {
+            printf("LED: Unknown command: %s\n", cmd);
+        }
+    }else if (strstr(msg->topic, usn) != NULL) {
+        connected = true;
+        printf("The device is connected to the controller: %s\n", msg->topic);
+        printf("Type q to quit...\n\n");
+    }
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -282,6 +269,7 @@ void on_publish(struct mosquitto *mosq, void *obj, int mid)
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 {
+    send_ssdp_message(-1, NULL, "byebye");
     if (rc != 0)
     {
         puts("Unexpected disconnection.");
@@ -313,6 +301,10 @@ int main()
     mosquitto_publish_callback_set(mosq, on_publish);
     mosquitto_disconnect_callback_set(mosq, on_disconnect);
 
+    char LWTTopic[64];
+    snprintf(LWTTopic, sizeof(LWTTopic), "VibeCheck/%s/disconnected", usn);
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);
+
     // connect to broker
     while (1)
     {
@@ -326,10 +318,23 @@ int main()
         sleep(5);
     }
 
-    ssdp_start(); // start SSDP
+    printf("Type q to quit...\n\n");
+    mosquitto_loop_start(mosq);
+    ssdp_start();
 
-    mosquitto_loop_forever(mosq, -1, 1);
+    char cmd[16];
+    while (1)
+    {
+        fgets(cmd, sizeof(cmd), stdin);
+        cmd[strcspn(cmd, "\n")] = 0;
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
+            break;
+    }
+    send_ssdp_message(-1, NULL, "byebye");
+    mosquitto_loop_stop(mosq, true);
+
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
+
     return 0;
 }

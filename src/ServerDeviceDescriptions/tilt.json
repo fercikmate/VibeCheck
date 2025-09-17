@@ -1,5 +1,5 @@
 {
-"id": "sensor_tilt_1",
+"id": "tilt_sensor",
 "group": "sensor",
 "ContactService": {
 "State": "T/F"
