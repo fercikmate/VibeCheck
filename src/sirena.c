@@ -247,7 +247,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
+    
     printf("Topic: %s\n", msg->topic); // TODO topic msg process
 }
 

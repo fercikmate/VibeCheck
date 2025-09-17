@@ -332,8 +332,8 @@ int main()
             }
             // Build JSON payload
             cJSON *root = cJSON_CreateObject();
-            cJSON_AddNumberToObject(root, "x", x);
-            cJSON_AddNumberToObject(root, "y", y);
+            cJSON_AddNumberToObject(root, "AngleX", x);
+            cJSON_AddNumberToObject(root, "AngleY", y);
             char *payload = cJSON_PrintUnformatted(root);
 
             int ret = mosquitto_publish(mosq, NULL, "VibeCheck/sensors/tilt", strlen(payload), payload, 0, false);

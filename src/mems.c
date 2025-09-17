@@ -14,16 +14,56 @@
 #define SSDPPORT 1900
 #define SSDP_ADDR "239.255.255.250"
 //defined by manufacturer
-#define max_vibration_threshold 29.43
-#define min_vibration_threshold 0.0
+double max_vibration_threshold = 0.0;
+double min_vibration_threshold = 0.0;
+char device_group[64] = "";
 
 // Global device information
 const char *ssdp_nts = "ssdp:alive";
 const char *ssdp_st = "ssdp:projekat";
-const char *ssdp_usn = "mems_sensor";
+const char *usn = "mems_sensor";
 const char *ssdp_location = "http://127.0.0.1:8080/mems.json";
 // Global control variable
 static volatile int running = 1;
+bool connected = false;
+
+
+
+// Function to parse mems.json and extract thresholds, and group
+void parse_mems_json(const char *filename) {
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        perror("Failed to open mems.json");
+        exit(1);
+    }
+    char buf[1024];
+    size_t len = fread(buf, 1, sizeof(buf)-1, fp);
+    buf[len] = '\0';
+    fclose(fp);
+
+    /* Extract id - device id is separate for each device
+    char *id_ptr = strstr(buf, "\"id\":");
+    if (id_ptr) {
+        sscanf(id_ptr, "\"id\": \"%63[^"]\"", device_id);
+    } */
+
+
+    // Extract group
+    char *group_ptr = strstr(buf, "\"group\":");
+    if (group_ptr) {
+        sscanf(group_ptr, "\"group\": \"%63[^\"]\"", device_group);
+    }
+    // Extract min and max vibration
+    char *vib_ptr = strstr(buf, "\"Vibration\":");
+    if (vib_ptr) {
+        double min, max;
+        if (sscanf(vib_ptr, "\"Vibration\": \"%lf~%lf\"", &min, &max) == 2) {
+            min_vibration_threshold = min;
+            max_vibration_threshold = max;
+        }
+    }
+}
+
 
 // Function prototype for send_ssdp_message
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
@@ -184,7 +224,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "USN: %s\r\n"
                  "LOCATION: %s\r\n"
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, ssdp_usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
@@ -195,7 +235,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS: ssdp:byebye\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -206,7 +246,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "ST: %s\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_st, ssdp_usn);
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
@@ -244,8 +284,9 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {   
-    if (strstr(msg->topic, ssdp_usn) != NULL) {
+    if (strstr(msg->topic, usn) != NULL) {
     // The topic contains your device name
+    connected = true;
     printf("The device is connected to the controller: %s\n", msg->topic);
     printf("Enter sensor input:\n");
     printf("Type q to quit...\n\n");
@@ -265,10 +306,12 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
     if (rc != 0)
     {
         puts("Unexpected disconnection.");
+        connected = false;
     }
     else
     {
         puts("Disconnected from broker.");
+        connected = false;
     }
 
     ssdp_stop();
@@ -276,6 +319,9 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 
 int main()
 {
+
+      // Parse mems.json for config
+    parse_mems_json("ServerDeviceDescriptions/mems.json");
     struct mosquitto *mosq;
     int rc;
     mosquitto_lib_init();
@@ -307,7 +353,7 @@ int main()
     
     // Set last will and testament
     const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq, LWTTopic, strlen(ssdp_usn), ssdp_usn, 0, false);//send device usn on ungraceful disconnect
+    mosquitto_will_set(mosq, LWTTopic, strlen(usn), usn, 0, false);//send device usn on ungraceful disconnect
 
    
     mosquitto_loop_start(mosq);
@@ -321,7 +367,7 @@ int main()
         cmd[strcspn(cmd, "\n")] = 0;
         if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
             break;
-        if (strlen(cmd) > 0) {
+        if (strlen(cmd) > 0 && connected) {
             char *endptr;
             double value = strtod(cmd, &endptr);
             if (*endptr != '\0') {
@@ -332,11 +378,14 @@ int main()
                 printf("Value out of range! Enter a number between %.2f and %.2f.\n", min_vibration_threshold, max_vibration_threshold);
                 continue;
             }
-            int ret = mosquitto_publish(mosq, NULL, "VibeCheck/sensors/vibration", strlen(cmd), cmd, 0, false);
+            // Compose JSON message with id, group, vibration
+            char pubmsg[256];
+            snprintf(pubmsg, sizeof(pubmsg), "{\"id\":\"%s\",\"group\":\"%s\",\"vibration\":%.2f}", usn, device_group, value);
+            int ret = mosquitto_publish(mosq, NULL, "VibeCheck/sensors/vibration", strlen(pubmsg), pubmsg, 0, false);
             if (ret != MOSQ_ERR_SUCCESS) {
                 fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
             } else {
-                printf("Published to VibeCheck/sensors/vibration: %s\n\n", cmd);
+                printf("Published to VibeCheck/sensors/vibration: %s\n\n", pubmsg);
                 printf("Enter sensor input:\n");
                 printf("Type q to quit...\n\n");
             }

@@ -36,11 +36,9 @@ int tilt_warning_threshold = 0.25;
 int tilt_alert_threshold = 0.5;
 char *state = "OK";
 
+
 // Function prototypes 
 void remove_device_by_id(const char *id);
-void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
-int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
-const char *get_device_id(cJSON *device_json);
 void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *type);
 int fetch_json_from_url(const char *url, char *json_buffer, size_t buffer_size);
 const char *get_device_id(cJSON *device_json);
@@ -158,34 +156,51 @@ void *multicast_listener(void *arg)
                                                 const char *existing_id = get_device_id(device_info[i]);
                                                 if (existing_id && strcmp(existing_id, new_id) == 0) {
                                                     already_connected = 1;
+                                                    printf("Device type %s is already connected.\n", new_id);
                                                     break;
                                                 }
                                             }
                                         }
                                         if (!already_connected) {
-                                    // Store in device_info array (find a free slot)
-                                    for (int i = 0; i < MAX_DEVICES; ++i) {
-                                        if (device_info[i] == NULL) {
-                                            device_info[i] = json;
-                                            printf("Added device: %s\n", get_device_id(json));
+                                            // Store in device_info array (find a free slot)
+                                            for (int i = 0; i < MAX_DEVICES; ++i) {
+                                                if (device_info[i] == NULL) {
+                                                    // Overwrite the device JSON's id field with the personal id from SSDP
+                                                    cJSON *id_item = cJSON_GetObjectItem(json, "id");
+                                                    if (id_item && cJSON_IsString(id_item)) {
+                                                        cJSON_SetValuestring(id_item, new_id);
+                                                    } else {
+                                                        cJSON_DeleteItemFromObject(json, "id");
+                                                        cJSON_AddStringToObject(json, "id", new_id);
+                                                    }
+                                                    device_info[i] = json;
+                                                    printf("Added device: %s\n", get_device_id(json));
 
-                                            // Notify via MQTT
-                                            char topic[128];
-                                            snprintf(topic, sizeof(topic), "VibeCheck/%s/connected", get_device_id(json));
-                                            int ret = mosquitto_publish(mosq, NULL, topic, 0, 0, 0, false);
-                                            if (ret != MOSQ_ERR_SUCCESS) {
-                                                fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
-                                            } else {
-                                                printf("Sent device online notification for device!\n\n");
+                                                    // Notify via MQTT
+                                                    char topic[128];
+                                                    snprintf(topic, sizeof(topic), "VibeCheck/%s/connected", get_device_id(json));
+                                                    int ret = mosquitto_publish(mosq, NULL, topic, 0, 0, 0, false);
+                                                    if (ret != MOSQ_ERR_SUCCESS) {
+                                                        fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
+                                                    } else {
+                                                        printf("Sent device connected notification for device!\n\n");
+                                                    }
+                                                    break;
+                                                }
                                             }
-                                            break;
-                                        }
-                                    }
                                         } else {
-                                            printf("Device type %s already connected, skipping.\n", new_id);
-                                            cJSON_Delete(json); // Free unused json
-                                            
+                                            printf("Device id %s already connected, forcing disconnect of new device.\n", new_id);
+                                            // Send disconnect message to the new device
+                                            char topic[128];
+                                            snprintf(topic, sizeof(topic), "VibeCheck/%s/disconnected", new_id);
+                                            int ret = mosquitto_publish(mosq, NULL, topic, strlen(new_id), new_id, 0, false);
+                                            if (ret != MOSQ_ERR_SUCCESS) {
+                                                fprintf(stderr, "Failed to publish disconnect: %s\n", mosquitto_strerror(ret));
+                                            } else {
+                                                printf("Sent disconnect notification to device %s.\n", new_id);
                                             }
+                                            cJSON_Delete(json); // Free unused json
+                                        }
                                 }
                             }
                         }
@@ -217,6 +232,7 @@ void *multicast_listener(void *arg)
                                         const char *existing_id = get_device_id(device_info[i]);
                                         if (existing_id && strcmp(existing_id, new_id) == 0) {
                                             already_connected = 1;
+                                            printf("Device type %s is already connected.\n", new_id);
                                             break;
                                         }
                                     }
@@ -226,6 +242,15 @@ void *multicast_listener(void *arg)
                                 // Store in device_info array (find a free slot)
                                 for (int i = 0; i < MAX_DEVICES; ++i) {
                                     if (device_info[i] == NULL) {
+
+                                        // Overwrite the device JSON's id field with the personal id from SSDP
+                                        cJSON *id_item = cJSON_GetObjectItem(json, "id");
+                                        if (id_item && cJSON_IsString(id_item)) {
+                                            cJSON_SetValuestring(id_item, new_id);
+                                        } else {
+                                            cJSON_DeleteItemFromObject(json, "id");
+                                            cJSON_AddStringToObject(json, "id", new_id);
+                                        }
                                         device_info[i] = json;
                                         printf("Added device: %s\n", get_device_id(json));
                                         
@@ -236,7 +261,7 @@ void *multicast_listener(void *arg)
                                         if (ret != MOSQ_ERR_SUCCESS) {
                                             fprintf(stderr, "Failed to publish: %s\n", mosquitto_strerror(ret));
                                         } else {
-                                            printf("Sent device online notification for device!\n\n"); //TODO terminate second instance of device
+                                            printf("Sent device connected notification for device!\n\n"); //TODO terminate second instance of device
                                         }
                                         break;
                                     }
@@ -425,22 +450,7 @@ void remove_device_by_id(const char *id) {
 
 }
 
-char *make_status_json(const char *type, float number, const char *state) {
-    cJSON *root = cJSON_CreateObject();
-    if (strcmp(type, "vibration") == 0) {
-        cJSON_AddNumberToObject(root, "vibration", number);
-    } else if (strcmp(type, "tilt") == 0) {
-        cJSON_AddNumberToObject(root, "tilt", number);
-    } else {
-        cJSON_AddStringToObject(root, "error", "unknown type");
-        cJSON_AddNumberToObject(root, "error_value", number);
-    }
-    cJSON_AddStringToObject(root, "state", state);
 
-    char *json_str = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    return json_str; // TODO always fre  with cJSON_free() after publishing
-}
 
 
 void on_connect(struct mosquitto *mosq, void *obj, int rc)
@@ -467,59 +477,114 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 {
     // Handle messages based on topic
     if(strcmp(msg->topic, "VibeCheck/sensors/vibration") == 0) {
-        // Handle vibration sensor data
+        // Handle vibration sensor data (JSON payload)
         printf("Vibration sensor data received: %s\n", (char *)msg->payload);
-        int vibration = atoi((char *)msg->payload);
-        const char *sirena_msg = "OFF";
-        const char *led_msg = "OFF";
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *id_item = cJSON_GetObjectItem(root, "id");
+            cJSON *group_item = cJSON_GetObjectItem(root, "group");
+            cJSON *vib_item = cJSON_GetObjectItem(root, "vibration");
+            if (cJSON_IsString(id_item) && cJSON_IsString(group_item) && cJSON_IsNumber(vib_item)) {
+                const char *device_id = id_item->valuestring;
+                const char *device_group = group_item->valuestring;
+                int vibration = vib_item->valuedouble;
+                printf("Device id: %s, group: %s, vibration: %d\n", device_id, device_group, vibration);
 
-        if (vibration >= vibration_alert_threshold) {
-            sirena_msg = "STEADY";
-            led_msg = "FAST";
-            state = "ALERT";
-        } else if (vibration >= vibration_warning_threshold) {
-            if (strcmp(state, "ALERT") != 0){
-                 sirena_msg = "INTERMITTENT";
-                 led_msg = "SLOW";
-                 state = "WARNING";
+                // Check if device is known
+                int found = 0;
+                for (int i = 0; i < MAX_DEVICES; ++i) {
+                    if (device_info[i] != NULL) {
+                        const char *existing_id = get_device_id(device_info[i]);
+                        if (existing_id && strcmp(existing_id, device_id) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                }
+            
+                if (!found) {
+                            printf("Device not found: %s\n", device_id);                    
+                }
+
+                // Actuator logic
+                const char *sirena_msg = "OFF";
+                const char *led_msg = "OFF";
+                if (vibration >= vibration_alert_threshold) {
+                    sirena_msg = "STEADY";
+                    led_msg = "FAST";
+                    state = "ALERT";
+                } else if (vibration >= vibration_warning_threshold) {
+                    if (strcmp(state, "ALERT") != 0){
+                        sirena_msg = "INTERMITTENT";
+                        led_msg = "SLOW";
+                        state = "WARNING";
+                    }
+                }
+                // Publish to sirena
+                int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/sirena", strlen(sirena_msg), sirena_msg, 0, false);
+                if (ret1 != MOSQ_ERR_SUCCESS) {
+                    fprintf(stderr, "Failed to publish to sirena: %s\n", mosquitto_strerror(ret1));
+                } else {
+                    printf("Published to sirena: %s\n", sirena_msg);
+                }
+                // Publish to LED
+                int ret2 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(led_msg), led_msg, 0, false);
+                if (ret2 != MOSQ_ERR_SUCCESS) {
+                    fprintf(stderr, "Failed to publish to LED: %s\n", mosquitto_strerror(ret2));
+                } else {
+                    printf("Published to LED: %s\n", led_msg);
+                }
+
+                // Publish id, group, vibration, and state to app
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "id", device_id);
+                cJSON_AddStringToObject(json, "group", device_group);
+                cJSON_AddNumberToObject(json, "vibration", vibration);
+                cJSON_AddStringToObject(json, "state", state);
+                char *vibmsg = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/app/vibration", strlen(vibmsg), vibmsg, 0, false);
+                cJSON_free(vibmsg);
+                cJSON_Delete(json);
+            } else {
+                printf("Invalid vibration JSON: missing or wrong type for id/group/vibration\n");
             }
-        }
-
-        // Publish to sirena
-        int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/acct/control", strlen(sirena_msg), sirena_msg, 0, false);
-        if (ret1 != MOSQ_ERR_SUCCESS) {
-            fprintf(stderr, "Failed to publish to sirena: %s\n", mosquitto_strerror(ret1));
+            cJSON_Delete(root);
         } else {
-            printf("Published to sirena: %s\n", sirena_msg);
+            printf("Failed to parse vibration JSON\n");
         }
-        // Publish to LEDd 
-        int ret2 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(led_msg), led_msg, 0, false);
-        if (ret2 != MOSQ_ERR_SUCCESS) {
-            fprintf(stderr, "Failed to publish to LED: %s\n", mosquitto_strerror(ret2));
-        } else {
-            printf("Published to LED: %s\n", led_msg);
-        }
-        // Publish status JSON
-        char *json_str = make_status_json("vibration", vibration, state);
-        mosquitto_publish(mosq, NULL, "VibeCheck/status", strlen(json_str), json_str, 0, false);
-        cJSON_free(json_str);   
-
     } else if(strcmp(msg->topic, "VibeCheck/sensors/tilt") == 0) {
         // Handle tilt sensor data
         printf("Tilt sensor data received: %s\n", (char *)msg->payload);
 
         cJSON *root = cJSON_Parse((char *)msg->payload);
         if (root) {
-            cJSON *x_item = cJSON_GetObjectItem(root, "x");
-            cJSON *y_item = cJSON_GetObjectItem(root, "y");
+            cJSON *id_item = cJSON_GetObjectItem(root, "id");
+            cJSON *group_item = cJSON_GetObjectItem(root, "group");
+            cJSON *x_item = cJSON_GetObjectItem(root, "AngleX");
+            cJSON *y_item = cJSON_GetObjectItem(root, "AngleY");
             const char *sirena_msg = "OFF";
             const char *led_msg = "OFF";
-            if (cJSON_IsNumber(x_item) && cJSON_IsNumber(y_item)) {
+            if (cJSON_IsString(id_item) && cJSON_IsString(group_item) && cJSON_IsNumber(x_item) && cJSON_IsNumber(y_item)) {
+                const char *device_id = id_item->valuestring;
+                const char *device_group = group_item->valuestring;
                 double x = x_item->valuedouble;
                 double y = y_item->valuedouble;
-                printf("Parsed tilt coordinates: x=%.2f, y=%.2f\n", x, y);
-
-                // Calculate tilt magnitude (example: Euclidean norm)
+                
+                // Device existence check
+                int found = 0;
+                for (int i = 0; i < MAX_DEVICES; ++i) {
+                    if (device_info[i] != NULL) {
+                        const char *existing_id = get_device_id(device_info[i]);
+                        if (existing_id && strcmp(existing_id, device_id) == 0) {
+                            found = 1;
+                            break;
+                        }
+                    }
+                }
+                if (!found) {
+                    printf("Device not found: %s\n", device_id);
+                }
+                // Calculate all tilt
                 double tilt = sqrt(x * x + y * y);
 
                 if (tilt >= tilt_alert_threshold) {
@@ -535,7 +600,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 }
 
                 // Publish to sirena
-                int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/acct/control", strlen(sirena_msg), sirena_msg, 0, false);
+                int ret1 = mosquitto_publish(mosq, NULL, "VibeCheck/actuators/sirena", strlen(sirena_msg), sirena_msg, 0, false);
                 if (ret1 != MOSQ_ERR_SUCCESS) {
                     fprintf(stderr, "Failed to publish to sirena: %s\n", mosquitto_strerror(ret1));
                 } else {
@@ -548,10 +613,21 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 } else {
                     printf("Published to LED: %s\n", led_msg);
                 }
-                // Publish status JSON
-                char *json_str = make_status_json("tilt", tilt, state);
-                mosquitto_publish(mosq, NULL, "VibeCheck/status", strlen(json_str), json_str, 0, false);
-                cJSON_free(json_str);
+                // Publish id, group, x, y, tilt, and state to app
+                cJSON *json = cJSON_CreateObject();
+                cJSON_AddStringToObject(json, "id", device_id);
+                cJSON_AddStringToObject(json, "group", device_group);
+                cJSON_AddNumberToObject(json, "AngleX", x);
+                cJSON_AddNumberToObject(json, "AngleY", y);
+                cJSON_AddNumberToObject(json, "tilt", tilt);
+                cJSON_AddStringToObject(json, "state", state);
+                char *tiltmsg = cJSON_PrintUnformatted(json);
+                mosquitto_publish(mosq, NULL, "VibeCheck/app/tilt", strlen(tiltmsg), tiltmsg, 0, false);
+                cJSON_free(tiltmsg);
+                cJSON_Delete(json);
+            } else {
+                printf("Invalid tilt JSON: missing or wrong type for id/group/x/y\n");
+            }
             } else {
                 printf("Invalid tilt JSON: missing or non-numeric x/y\n");
             }
@@ -562,6 +638,64 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
     } else if(strcmp(msg->topic, "VibeCheck/threshold/change") == 0) {
         // Handle threshold change command
         printf("Threshold change command received: %s\n", (char *)msg->payload);
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *type_item = cJSON_GetObjectItem(root, "type");
+            cJSON *value_item = cJSON_GetObjectItem(root, "value");
+            if (cJSON_IsString(type_item) && cJSON_IsNumber(value_item)) {
+                const char *type = type_item->valuestring;
+                double value = value_item->valuedouble;
+                if (strcmp(type, "VibrationWarningThreshold") == 0) {
+                    vibration_warning_threshold = (int)value;
+                    printf("Set vibration_warning_threshold to %d\n", vibration_warning_threshold);
+                } else if (strcmp(type, "VibrationAlertThreshold") == 0) {
+                    vibration_alert_threshold = (int)value;
+                    printf("Set vibration_alert_threshold to %d\n", vibration_alert_threshold);
+                } else if (strcmp(type, "TiltWarningThreshold") == 0) {
+                    tilt_warning_threshold = value;
+                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold);
+                } else if (strcmp(type, "TiltAlertThreshold") == 0) {
+                    tilt_alert_threshold = value;
+                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold);
+                } else {
+                    printf("Unknown threshold type: %s\n", type);
+                }
+            } else {
+                printf("Invalid threshold change JSON: missing or wrong type for type/value\n");
+            }
+            cJSON_Delete(root);
+        } else {
+            printf("Failed to parse threshold change JSON\n");
+        }
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *type_item = cJSON_GetObjectItem(root, "type");
+            cJSON *value_item = cJSON_GetObjectItem(root, "value");
+            if (cJSON_IsString(type_item) && cJSON_IsNumber(value_item)) {
+                const char *type = type_item->valuestring;
+                double value = value_item->valuedouble;
+                if (strcmp(type, "VibrationWarningThreshold") == 0) {
+                    vibration_warning_threshold = (int)value;
+                    printf("Set vibration_warning_threshold to %d\n", vibration_warning_threshold);
+                } else if (strcmp(type, "VibrationAlertThreshold") == 0) {
+                    vibration_alert_threshold = (int)value;
+                    printf("Set vibration_alert_threshold to %d\n", vibration_alert_threshold);
+                } else if (strcmp(type, "TiltWarningThreshold") == 0) {
+                    tilt_warning_threshold = value;
+                    printf("Set tilt_warning_threshold to %f\n", tilt_warning_threshold);
+                } else if (strcmp(type, "TiltAlertThreshold") == 0) {
+                    tilt_alert_threshold = value;
+                    printf("Set tilt_alert_threshold to %f\n", tilt_alert_threshold);
+                } else {
+                    printf("Unknown threshold type: %s\n", type);
+                }
+            } else {
+                printf("Invalid threshold change JSON: missing or wrong type for type/value\n");
+            }
+            cJSON_Delete(root);
+        } else {
+            printf("Failed to parse threshold change JSON\n");
+        }
     } else if(strstr(msg->topic, "/disconnected") != NULL) {
         // Handle device disconnection
         char device_id[64];
@@ -577,7 +711,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
-    printf("Message -> %d <- has been published to %s.\n", mid, (char *)obj);
+    printf("Message has been published! \n");
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
