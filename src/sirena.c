@@ -17,7 +17,7 @@
 // Global device information
 const char *ssdp_nts = "ssdp:alive";   // cheating SSDP protocol by using alive as sub type in notify
 const char *ssdp_st = "ssdp:projekat"; // cheating SSDP protocol by using projekat as type in notify and response
-const char *ssdp_usn = "sirena_actuator";
+const char *usn = "sirena_actuator";
 const char *ssdp_location = "http://127.0.0.1:8080/sirena.json";
 // Global control variable
 static volatile int running = 1;
@@ -184,7 +184,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "USN: %s\r\n"      // unique name
                  "LOCATION: %s\r\n" // TODO add proper ip:port.json
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, ssdp_usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_nts, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
@@ -195,7 +195,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS: ssdp:byebye\r\n" // subtype
                  "USN: %s\r\n"          // unique name
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_st, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_st, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -208,7 +208,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "ST: %s\r\n"
                  "USN: %s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_st, ssdp_usn);
+                 ssdp_location, ssdp_st, usn);
     }
     else
     {
@@ -232,7 +232,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     if (rc == 0)
     {
         puts("Subscribing to topics...");
-        mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/audio", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/sirena", 0);
         mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
        
 
@@ -247,8 +247,18 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    
-    printf("Topic: %s\n", msg->topic); // TODO topic msg process
+    if (strcmp(msg->topic, "VibeCheck/actuators/sirena") == 0) {
+        const char *cmd = (char *)msg->payload;
+        if (strcmp(cmd, "OFF") == 0) {
+            printf("SIRENA: System OK (OFF)\n");
+        } else if (strcmp(cmd, "INTERMITTENT") == 0) {
+            printf("SIRENA: WARNING (INTERMITTENT)\n");
+        } else if (strcmp(cmd, "STEADY") == 0) {
+            printf("SIRENA: ALERT (STEADY)\n");
+        } else {
+            printf("SIRENA: Unknown command: %s\n", cmd);
+        }
+    }
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -306,12 +316,7 @@ int main()
     // Publish a will message on ungraceful disconnect
     // publishes the usn of the device, so the controler know which device disconnected
     const char *LWTTopic = "VibeCheck/devices/disconnected";
-    mosquitto_will_set(mosq,
-                       LWTTopic,
-                       strlen(ssdp_usn), // payload length
-                       ssdp_usn,         // payload
-                       0,                // qos
-                       false);           // retain
+    mosquitto_will_set(mosq,LWTTopic,strlen(usn),  usn,  0, false);        
 
     printf("Type q to quit...\n\n");
     mosquitto_loop_start(mosq); // runs in background

@@ -701,6 +701,35 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
             remove_device_by_id(device_id);
         }
         printf("Device disconnected: %s\n", (char *)msg->payload);
+        
+    } else if(strcmp(msg->topic, "VibeCheck/control/command") == 0) {
+        printf("Received actuator command: %s\n", (char *)msg->payload);
+        cJSON *root = cJSON_Parse((char *)msg->payload);
+        if (root) {
+            cJSON *sirena_item = cJSON_GetObjectItem(root, "SIRENA");
+            if (cJSON_IsString(sirena_item)) {
+                const char *cmd = sirena_item->valuestring;
+                const char *forward = "OFF";
+                if (strcmp(cmd, "WARNING") == 0) forward = "INTERMITTENT";
+                else if (strcmp(cmd, "ALERT") == 0) forward = "STEADY";
+                else if (strcmp(cmd, "OFF") == 0) forward = "OFF";
+                mosquitto_publish(mosq, NULL, "VibeCheck/actuators/sirena", strlen(forward), forward, 0, false);
+                printf("Forwarded SIRENA command: %s\n", forward);
+            }
+            cJSON *led_item = cJSON_GetObjectItem(root, "LED");
+            if (cJSON_IsString(led_item)) {
+                const char *cmd = led_item->valuestring;
+                const char *forward = "OFF";
+                if (strcmp(cmd, "WARNING") == 0) forward = "SLOW";
+                else if (strcmp(cmd, "ALERT") == 0) forward = "FAST";
+                else if (strcmp(cmd, "OFF") == 0) forward = "OFF";
+                mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(forward), forward, 0, false);
+                printf("Forwarded LED command: %s\n", forward);
+            }
+            cJSON_Delete(root);
+        } else {
+            printf("Invalid actuator command JSON\n");
+        }
     }
 }
 

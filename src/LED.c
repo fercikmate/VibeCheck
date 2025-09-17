@@ -16,8 +16,8 @@
 
 // Global device information
 const char *ssdp_nt = "device:alive";
-const char *ssdp_usn = "LED_actuator";
-const char *ssdp_location = "http://192.168.1.100:8080/d.xml"; // or idk
+const char *usn = "LED_actuator";
+const char *ssdp_location = "http://192.168.1.100:8080/led.json"; // or idk
 // Global control variable
 static volatile int running = 1;
 
@@ -173,7 +173,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "USN:%s\r\n"         // unique name
                  "LOCATION:%s\r\n"
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nt, ssdp_usn, ssdp_location);
+                 SSDP_ADDR, SSDPPORT, ssdp_nt, usn, ssdp_location);
     }
     else if (strcmp(type, "byebye") == 0)
     {
@@ -184,7 +184,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "NTS:ssdp:byebye\r\n" // subtype
                  "USN:%s\r\n"          // unique name
                  "\r\n",
-                 SSDP_ADDR, SSDPPORT, ssdp_nt, ssdp_usn);
+                 SSDP_ADDR, SSDPPORT, ssdp_nt, usn);
     }
     else if (strcmp(type, "response") == 0)
     {
@@ -197,7 +197,7 @@ void send_ssdp_message(int sockfd, struct sockaddr_in *dest_addr, const char *ty
                  "ST:%s\r\n"
                  "USN:%s\r\n"
                  "\r\n",
-                 ssdp_location, ssdp_nt, ssdp_usn);
+                 ssdp_location, ssdp_nt, usn);
     }
     else
     {
@@ -222,6 +222,7 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
     {
         puts("Subscribing to topics...");
         mosquitto_subscribe(mosq, NULL, "VibeCheck/actuators/LED", 0);
+        mosquitto_subscribe(mosq, NULL, "VibeCheck/+/connected", 0);
         puts("Subscribed successfully.");
     }
     else
@@ -233,9 +234,18 @@ void on_connect(struct mosquitto *mosq, void *obj, int rc)
 
 void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_message *msg)
 {
-    // Print the topic for the first message received, then disconnect
-    printf("Topic: %s\n", msg->topic);
-    mosquitto_disconnect(mosq);
+    if (strcmp(msg->topic, "VibeCheck/actuators/LED") == 0) {
+        const char *cmd = (char *)msg->payload;
+        if (strcmp(cmd, "OFF") == 0) {
+            printf("LED: System OK (OFF)\n");
+        } else if (strcmp(cmd, "SLOW") == 0) {
+            printf("LED: WARNING (SLOW)\n");
+        } else if (strcmp(cmd, "FAST") == 0) {
+            printf("LED: ALERT (FAST)\n");
+        } else {
+            printf("LED: Unknown command: %s\n", cmd);
+        }
+    }
 }
 
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
@@ -245,6 +255,7 @@ void on_publish(struct mosquitto *mosq, void *obj, int mid)
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 {
+    send_ssdp_message(-1, NULL, "byebye");
     if (rc != 0)
     {
         puts("Unexpected disconnection.");
@@ -288,9 +299,30 @@ int main()
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
-    ssdp_start(); // start SSDP
 
-    mosquitto_loop_forever(mosq, -1, 1);
+    const char *LWTTopic = "VibeCheck/devices/disconnected";
+    mosquitto_will_set(mosq,
+                       LWTTopic,
+                       strlen(usn),
+                       usn,
+                       0,
+                       false);
+
+    printf("Type q to quit...\n\n");
+    mosquitto_loop_start(mosq);
+    ssdp_start();
+
+    char cmd[16];
+    while (1)
+    {
+        fgets(cmd, sizeof(cmd), stdin);
+        cmd[strcspn(cmd, "\n")] = 0;
+        if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0)
+            break;
+    }
+    send_ssdp_message(-1, NULL, "byebye");
+    mosquitto_loop_stop(mosq, true);
+
     mosquitto_destroy(mosq);
     mosquitto_lib_cleanup();
 
