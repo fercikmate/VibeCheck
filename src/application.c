@@ -321,7 +321,7 @@ void print_status()
 }
 void on_publish(struct mosquitto *mosq, void *obj, int mid)
 {
-    printf("Message %d has been published.\n", mid);
+    //printf("Message %d has been published.\n", mid);
 }
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
@@ -335,6 +335,31 @@ void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
         puts("Disconnected from broker.");
     }
     ssdp_stop(); // stop SSDP when disconnected
+}
+
+void *periodic_status_request(void *arg)
+{
+    struct mosquitto *mosq = (struct mosquitto *)arg;
+    while (running) {
+        sleep(30); // publish every 30 seconds
+        cJSON *json = cJSON_CreateObject();
+        cJSON_AddStringToObject(json, "STATUS", "PERIODIC_REQUEST");
+        char *payload = cJSON_PrintUnformatted(json);
+        mosquitto_publish(mosq, NULL, "VibeCheck/control/command", strlen(payload), payload, 0, false);
+        printf("Sent periodic STATUS REQUEST to controller\n");
+        cJSON_free(payload);
+        cJSON_Delete(json);
+        sleep(1); // slight delay to ensure message order
+        printf("Available commands:\n");
+        printf(" Threshold change:\n");
+        printf("    Vibration <warning> <alert>\n");
+        printf("    Tilt <warning> <alert>\n");
+        printf(" Actuator control:\n");
+        printf("    SIRENA <OFF|WARNING|ALERT>\n");
+        printf("    LED <OFF|WARNING|ALERT>\n\n");
+        
+    }
+    return NULL;
 }
 
 int main()
@@ -370,6 +395,10 @@ int main()
         perror("Failed to connect to broker, retrying in 5 seconds...");
         sleep(5);
     }
+    //start status check thread
+    pthread_t status_thread;
+    pthread_create(&status_thread, NULL, periodic_status_request, mosq);
+    pthread_detach(status_thread);
 
     mosquitto_loop_start(mosq); // Start MQTT loop in background
 
@@ -481,6 +510,7 @@ int main()
             printf("    LED <OFF|WARNING|ALERT>\n\n");
         }
     }
+
 
     mosquitto_loop_stop(mosq, true);
     mosquitto_destroy(mosq);

@@ -275,7 +275,7 @@ void on_publish(struct mosquitto *mosq, void *obj, int mid)
 
 void on_disconnect(struct mosquitto *mosq, void *obj, int rc)
 {
-    send_ssdp_message(-1, NULL, "byebye");
+    
     if (rc != 0)
     {
         puts("Unexpected disconnection.");
@@ -340,7 +340,8 @@ int main()
             break;
         }
     }
-    send_ssdp_message(-1, NULL, "byebye");
+     mosquitto_disconnect(mosq);
+    sleep(3); // Give time for clean disconnect
     mosquitto_loop_stop(mosq, true);
 
     mosquitto_destroy(mosq);

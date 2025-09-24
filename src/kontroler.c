@@ -196,13 +196,16 @@ void *multicast_listener(void *arg)
                                             printf("Device id %s already connected, forcing disconnect of new device.\n", new_id);
                                             // Send disconnect message to the new device
                                             char topic[128];
-                                            snprintf(topic, sizeof(topic), "VibeCheck/%s/disconnected", new_id);
+                                          
+                                            printf("This feature is not fully implemented yet :(\n");
+                                              //TODO
+                                           /* snprintf(topic, sizeof(topic), "VibeCheck/%s/disconnected", new_id);
                                             int ret = mosquitto_publish(mosq, NULL, topic, strlen(new_id), new_id, 0, false);
                                             if (ret != MOSQ_ERR_SUCCESS) {
                                                 fprintf(stderr, "Failed to publish disconnect: %s\n", mosquitto_strerror(ret));
                                             } else {
                                                 printf("Sent disconnect notification to device %s.\n", new_id);
-                                            }
+                                            }*/
                                             cJSON_Delete(json); // Free unused json
                                         }
                                 }
@@ -215,6 +218,7 @@ void *multicast_listener(void *arg)
                         printf("BYEBYE received: %s", msgbuf);
                         sscanf(strstr(msgbuf, "USN: "), "USN: %63[^\r\n]", device_id);
                         remove_device_by_id(device_id);
+                        printf("Graceful disconnection!\n");
                         publish_device_list(mosq);
                         
                     }
@@ -708,7 +712,7 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
         }
         
     } else if(strcmp(msg->topic, "VibeCheck/control/command") == 0) {
-        printf("Received actuator command: %s\n", (char *)msg->payload);
+        printf("Received command: %s\n", (char *)msg->payload);
         cJSON *root = cJSON_Parse((char *)msg->payload);
         if (root) {
             cJSON *sirena_item = cJSON_GetObjectItem(root, "SIRENA");
@@ -730,6 +734,14 @@ void on_message(struct mosquitto *mosq, void *obj, const struct mosquitto_messag
                 else if (strcmp(cmd, "OFF") == 0) forward = "OFF";
                 mosquitto_publish(mosq, NULL, "VibeCheck/actuators/LED", strlen(forward), forward, 0, false);
                 printf("Forwarded LED command: %s\n", forward);
+            }
+            cJSON *Status = cJSON_GetObjectItem(root, "STATUS");
+            if (cJSON_IsString(Status)) {
+                const char *cmd = Status->valuestring;
+                if (strcmp(cmd, "PERIODIC_REQUEST") == 0) {
+                    printf("Periodic status request received.\n");
+                    publish_device_list(mosq);
+                }
             }
             cJSON_Delete(root);
         } else {
