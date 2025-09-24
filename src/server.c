@@ -17,7 +17,7 @@ int read_file(const char *filename, char **buffer) {
     fseek(file, 0, SEEK_END);
     long size = ftell(file); 
     fseek(file, 0, SEEK_SET); //back to start
-    
+     
 
     *buffer = malloc(size + 1); // +1 for /0
     fread(*buffer, 1, size, file);
