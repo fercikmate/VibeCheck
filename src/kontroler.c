@@ -110,7 +110,7 @@ void *multicast_listener(void *arg)
         FD_ZERO(&read_fds);
         FD_SET(ssdp_sockfd, &read_fds);
 
-        timeout.tv_sec = 1;
+        timeout.tv_sec = 1; 
         timeout.tv_usec = 0;
         retval = select(ssdp_sockfd + 1, &read_fds, NULL, NULL, &timeout);
         if (retval == -1)
